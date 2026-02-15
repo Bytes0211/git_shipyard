@@ -626,3 +626,63 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"Missing value for --head"* ]]
 }
+
+# =============================================================================
+# Test 12: Multi-line message support
+# =============================================================================
+
+@test "format_message_preview shows single line as-is" {
+    cat > "$TEST_DIR/test_preview.sh" << EOF
+#!/usr/bin/env bash
+main() { :; }
+source "$SCRIPT_DIR/git-shipyard.sh"
+result=\$(format_message_preview "Single line message")
+echo "RESULT=\$result"
+EOF
+    chmod +x "$TEST_DIR/test_preview.sh"
+    
+    run "$TEST_DIR/test_preview.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RESULT=Single line message"* ]]
+}
+
+@test "format_message_preview truncates multi-line with count" {
+    cat > "$TEST_DIR/test_preview_multi.sh" << 'EOF'
+#!/usr/bin/env bash
+format_message_preview() {
+    local msg="$1"
+    local first_line
+    local line_count
+    
+    first_line=$(echo "$msg" | head -n1)
+    line_count=$(echo "$msg" | wc -l)
+    
+    if [ "$line_count" -gt 1 ]; then
+        echo "${first_line} (+$((line_count - 1)) more lines)"
+    else
+        echo "$first_line"
+    fi
+}
+
+msg="First line
+Second line
+Third line"
+result=$(format_message_preview "$msg")
+echo "RESULT=$result"
+EOF
+    chmod +x "$TEST_DIR/test_preview_multi.sh"
+    
+    run "$TEST_DIR/test_preview_multi.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RESULT=First line (+2 more lines)"* ]]
+}
+
+@test "script contains get_commit_message function" {
+    run grep "get_commit_message()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "get_commit_message offers editor option" {
+    run grep "Multi-line (open editor)" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
