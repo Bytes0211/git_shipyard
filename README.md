@@ -2,9 +2,9 @@
 
 **Git Shipyard** is an interactive Bash utility that streamlines your Git workflow by automating the common sequence of staging, committing, pushing, and creating GitHub pull requests—all in one command.
 
-## Screen Shot
+## ScreenShot
 
-![it-shipyard screenshot](screenshot.png)
+![git-shipyard screenshot](screenshot.png)
 
 ## Features
 
