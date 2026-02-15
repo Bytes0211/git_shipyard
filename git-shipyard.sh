@@ -116,6 +116,98 @@ check_remote() {
     fi
 }
 
+# Get commit message (supports single-line or multi-line via editor)
+# Usage: get_commit_message "prompt_text" variable_name
+get_commit_message() {
+    local prompt="$1"
+    local -n result_var="$2"
+    
+    echo -e "${YELLOW}${prompt}${NC}"
+    echo -e "  ${CYAN}1.${NC} Single line (type here)"
+    echo -e "  ${CYAN}2.${NC} Multi-line (open editor)"
+    echo ""
+    
+    local input_choice
+    while true; do
+        read -r -p "Choose (1/2): " input_choice
+        case "$input_choice" in
+            1)
+                # Single-line input
+                read -r -p "> " result_var
+                # Flush any remaining input
+                read -r -t 0.1 -n 10000 discard 2>/dev/null || true
+                break
+                ;;
+            2)
+                # Multi-line via editor
+                local tmpfile
+                tmpfile=$(mktemp /tmp/git-shipyard-msg.XXXXXX)
+                
+                # Add template/instructions to temp file
+                cat > "$tmpfile" << 'TEMPLATE'
+
+# Enter your commit message above.
+# Lines starting with '#' will be ignored.
+# Save and close the editor to continue.
+# Leave empty to abort.
+TEMPLATE
+                
+                # Determine editor (default to nano)
+                local editor="nano"
+                
+                # Check if editor exists
+                if ! command -v "${editor%% *}" &> /dev/null; then
+                    # Fallback chain
+                    for e in nano vim vi; do
+                        if command -v "$e" &> /dev/null; then
+                            editor="$e"
+                            break
+                        fi
+                    done
+                fi
+                
+                echo -e "${BLUE}Opening editor (${editor})...${NC}"
+                
+                # Open editor
+                if ! $editor "$tmpfile"; then
+                    rm -f "$tmpfile"
+                    error_exit "Editor exited with an error."
+                fi
+                
+                # Read message, stripping comments and leading/trailing whitespace
+                result_var=$(grep -v '^#' "$tmpfile" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                
+                rm -f "$tmpfile"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice. Please enter 1 or 2.${NC}"
+                ;;
+        esac
+    done
+    
+    # Validate non-empty
+    if [ -z "$result_var" ]; then
+        error_exit "Commit message cannot be empty."
+    fi
+}
+
+# Format commit message for display (truncate multi-line)
+format_message_preview() {
+    local msg="$1"
+    local first_line
+    local line_count
+    
+    first_line=$(echo "$msg" | head -n1)
+    line_count=$(echo "$msg" | wc -l)
+    
+    if [ "$line_count" -gt 1 ]; then
+        echo "${first_line} (+$((line_count - 1)) more lines)"
+    else
+        echo "$first_line"
+    fi
+}
+
 # Main script
 main() {
     # Trap for unexpected errors (only active during main execution)
@@ -199,41 +291,30 @@ main() {
     
     if [ "$mode" = "full" ]; then
         # Prompt for commit message
-        echo -e "${YELLOW}Enter your commit message:${NC}"
-        read -r -p "> " commit_message
-        
-        # Validate commit message
-        if [ -z "$commit_message" ]; then
-            error_exit "Commit message cannot be empty."
-        fi
-        
-        # Flush any remaining input (handles pasted multi-line text)
-        read -r -t 0.1 -n 10000 discard 2>/dev/null || true
+        local commit_message
+        get_commit_message "Enter your commit message:" commit_message
         
         # Confirm action
+        local msg_preview
+        msg_preview=$(format_message_preview "$commit_message")
         echo ""
         echo -e "${BLUE}The following actions will be performed:${NC}"
         echo -e "  1. Stage all changes (git add .)"
-        echo -e "  2. Commit with message: ${CYAN}\"$commit_message\"${NC}"
+        echo -e "  2. Commit with message: ${CYAN}\"$msg_preview\"${NC}"
         echo -e "  3. Push to origin/${HEAD_BRANCH}"
         echo -e "  4. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
     elif [ "$mode" = "squash_merge" ]; then
         # Squash-merge mode - prompt for commit message
-        echo -e "${YELLOW}Enter squash-merge commit message:${NC}"
-        read -r -p "> " squash_message
+        local squash_message
+        get_commit_message "Enter squash-merge commit message:" squash_message
         
-        if [ -z "$squash_message" ]; then
-            error_exit "Commit message cannot be empty."
-        fi
-        
-        # Flush any remaining input
-        read -r -t 0.1 -n 10000 discard 2>/dev/null || true
-        
+        local msg_preview
+        msg_preview=$(format_message_preview "$squash_message")
         echo ""
         echo -e "${BLUE}The following actions will be performed:${NC}"
         echo -e "  1. Switch to ${BASE_BRANCH}"
         echo -e "  2. Squash-merge ${HEAD_BRANCH} into ${BASE_BRANCH}"
-        echo -e "  3. Commit with message: ${CYAN}\"$squash_message\"${NC}"
+        echo -e "  3. Commit with message: ${CYAN}\"$msg_preview\"${NC}"
         echo -e "  4. Push ${BASE_BRANCH} to origin"
     else
         # PR only mode

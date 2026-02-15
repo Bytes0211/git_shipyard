@@ -2,7 +2,7 @@
 
 **Git Shipyard** is an interactive Bash utility that streamlines your Git workflow by automating the common sequence of staging, committing, pushing, and creating GitHub pull requests—all in one command.
 
-## ScreenShot
+## Screenshot
 
 ![git-shipyard screenshot](screenshot.png)
 
@@ -11,10 +11,13 @@
 - 🚢 **One-command workflow**: Stage, commit, push, and create PR in a single interactive session
 - 🎯 **Smart mode detection**: Automatically adapts to your repository state
   - Full workflow when you have uncommitted changes
-  - PR-only mode when changes are already committed
+  - PR-only mode when changes are already committed with open PR
+  - **Squash-merge mode** when no open PRs exist (merge directly without PR overhead)
+- 📝 **Multi-line commit messages**: Choose single-line input or open your preferred editor
 - ✅ **Pre-flight checks**: Validates environment before execution (git, gh CLI, authentication, remote)
 - 🎨 **Beautiful CLI interface**: Color-coded output with progress indicators
 - 🛡️ **Safe by default**: Confirmation prompts before executing operations
+- 🧹 **Branch cleanup**: Option to delete feature branch after squash-merge
 - ⚙️ **Configurable branches**: Override default base and head branches via flags
 
 ## Prerequisites
@@ -80,9 +83,16 @@ By default, Git Shipyard creates PRs from `dev` to `main`. You can override thes
 Stage → Commit → Push → Create PR
 ```
 
-**PR-only Mode** (changes already committed):
+**PR-only Mode** (changes already committed, open PR exists):
 ```
 Push (if needed) → Create PR
+```
+
+**Squash-Merge Mode** (commits ahead, no open PRs):
+```
+Prompt: PR or Squash-merge?
+  → If Squash: Checkout base → Squash-merge → Commit → Push → Cleanup prompt
+  → If PR: Push → Create PR
 ```
 
 ### Help
@@ -142,7 +152,69 @@ The following actions will be performed:
 Proceed? (y/N): y
 ```
 
-### Scenario 3: Custom branches
+### Scenario 3: Squash-merge (no open PRs)
+
+```bash
+$ ./git-shipyard.sh
+
+Running pre-flight checks...
+  ✓ git found
+  ✓ gh CLI found
+  ✓ Inside git repository
+  ✓ GitHub authenticated
+  ✓ Remote 'origin' configured
+  ✓ Commits ahead of main (no open PRs)
+
+No uncommitted changes detected.
+No open PRs for dev.
+Your branch is ahead of main.
+
+How would you like to proceed?
+  1. Create a Pull Request (existing workflow)
+  2. Squash-merge into main
+
+Choose (1/2): 2
+
+Enter squash-merge commit message:
+  1. Single line (type here)
+  2. Multi-line (open editor)
+
+Choose (1/2): 1
+> Merge feature: user authentication
+
+The following actions will be performed:
+  1. Switch to main
+  2. Squash-merge dev into main
+  3. Commit with message: "Merge feature: user authentication"
+  4. Push main to origin
+
+Proceed? (y/N): y
+```
+
+### Scenario 4: Multi-line commit message
+
+```bash
+Enter your commit message:
+  1. Single line (type here)
+  2. Multi-line (open editor)
+
+Choose (1/2): 2
+Opening editor (nano)...
+
+# Editor opens with template, user writes:
+# Add user authentication feature
+#
+# - Implement login/logout endpoints
+# - Add JWT token validation
+# - Create user session management
+
+The following actions will be performed:
+  1. Stage all changes (git add .)
+  2. Commit with message: "Add user authentication feature (+3 more lines)"
+  ...
+```
+
+### Scenario 5: Custom branches
 
 ```bash
 $ ./git-shipyard.sh --base production --head hotfix-auth
@@ -187,6 +259,7 @@ You can override defaults per invocation using flags, or consider reading from g
 - Currently supports GitHub only (via `gh` CLI)
 - Uses `origin` remote by default
 - Stages all changes (`git add .`) rather than selective staging
+- Squash-merge does not preserve individual commit history on base branch
 
 ## Troubleshooting
 

@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project Overview
 
-Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates the Git workflow: staging, committing, pushing, and creating GitHub pull requests in one interactive session.
+Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates the Git workflow: staging, committing, pushing, and creating GitHub pull requests—or performing direct squash-merges—in one interactive session.
 
 ## Architecture
 
@@ -12,16 +12,18 @@ Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates th
 The entire application is contained in `git-shipyard.sh` with no external dependencies beyond standard Unix tools, git, and GitHub CLI (gh).
 
 ### Execution Modes
-The script automatically detects and switches between two operational modes:
+The script automatically detects and switches between three operational modes:
 - **Full mode**: Triggered when uncommitted changes exist (staged, unstaged, or untracked files). Executes: stage → commit → push → create PR
-- **PR-only mode**: Triggered when branch has commits ahead of base but no uncommitted changes. Executes: push (if needed) → create PR
+- **PR-only mode**: Triggered when branch has commits ahead of base and an open PR exists. Executes: push (if needed) → create PR
+- **Squash-merge mode**: Triggered when branch has commits ahead, no uncommitted changes, and no open PRs. User chooses between PR or direct squash-merge into base branch.
 
-Mode detection logic relies on `has_uncommitted_changes()` and `has_commits_ahead()` functions which query git state.
+Mode detection logic relies on `has_uncommitted_changes()`, `has_commits_ahead()`, and `has_open_prs()` functions which query git and GitHub state.
 
 ### Error Handling Strategy
 - All Git/GitHub operations use conditional checks with `error_exit()` on failure
-- Global ERR trap (line 259) catches unexpected errors
+- ERR trap inside `main()` catches unexpected errors (moved inside main for source guard compatibility)
 - Special case: If PR already exists, script opens it in browser rather than failing
+- Squash-merge conflicts trigger PR fallback option with proper `git reset --merge` cleanup
 
 ## Development Commands
 
@@ -41,7 +43,13 @@ git commit -m "test"
 ### Manual Testing Prerequisites
 - Must be in a git repository with configured origin remote
 - Requires GitHub CLI authentication: `gh auth status`
-- Test both execution modes by manipulating repository state
+- Test all three execution modes by manipulating repository state
+
+### Running Unit Tests
+```bash
+# Run all BATS tests (33 tests)
+bats test/git-shipyard.bats
+```
 
 ### Installation Testing
 ```bash
@@ -65,13 +73,25 @@ git shipyard --help
 - PR view fallback if creation fails due to existing PR
 
 ### Input Handling
-- Line 164 flushes stdin buffer to handle pasted multi-line text that could interfere with confirmation prompt
+- `get_commit_message()`: Prompts user to choose single-line input or multi-line via editor
+- Editor mode respects `git config core.editor`, `$VISUAL`, `$EDITOR`, with fallback to nano/vim/vi
+- `format_message_preview()`: Truncates multi-line messages for display (shows first line + count)
 - Empty commit messages are rejected before any git operations execute
 
 ### State Detection Functions
 - `has_uncommitted_changes()`: Checks git diff (staged/unstaged) and untracked files
 - `has_commits_ahead()`: Uses `git rev-list --count BASE..HEAD` to detect unpushed commits
-- Both functions determine which workflow mode executes
+- `has_open_prs()`: Uses `gh pr list --head BRANCH --state open` to check for existing PRs
+- These functions determine which workflow mode executes
+
+### Source Guard
+The script uses a source guard pattern for testability:
+```bash
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
+```
+This allows BATS tests to source the script and test individual functions without executing `main()`.
 
 ## Modification Guidelines
 
@@ -92,3 +112,9 @@ echo -e "  ${GREEN}✓${NC} Success message"
 
 ### Branch Defaults for Different Projects
 Users can override defaults per-invocation with flags, or modify lines 10-11 for permanent changes. Consider reading from git config if permanent per-repo customization needed.
+
+### Squash-Merge Considerations
+- Squash-merge uses `git merge --squash` which does NOT set `MERGE_HEAD`
+- On conflict, must use `git reset --merge` (not `git merge --abort`)
+- After squash-merge, user is prompted to delete feature branch
+- Warning displayed if user keeps branch (re-merge may cause duplicate conflicts)
