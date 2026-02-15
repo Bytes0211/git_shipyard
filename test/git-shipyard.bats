@@ -13,55 +13,11 @@ setup() {
     SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
     export SCRIPT_DIR
 
-    # Create a helper script that sources functions without running main
-    cat > "$TEST_DIR/source_functions.sh" << 'EOF'
+    # Create a helper script that sources functions from the actual script
+    cat > "$TEST_DIR/source_functions.sh" << EOF
 #!/usr/bin/env bash
-# Source the script functions without executing main
-
-# Default branch names
-BASE_BRANCH="main"
-HEAD_BRANCH="dev"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-# Error handler
-error_exit() {
-    echo -e "\n${RED}Error: $1${NC}" >&2
-    echo -e "${YELLOW}Goodbye!${NC}"
-    exit 1
-}
-
-# Check if command exists
-check_command() {
-    if ! command -v "$1" &> /dev/null; then
-        error_exit "$1 is not installed. Please install it and try again."
-    fi
-}
-
-# Check if in a git repository
-check_git_repo() {
-    if ! git rev-parse --is-inside-work-tree &> /dev/null; then
-        error_exit "Not inside a git repository."
-    fi
-}
-
-# Check if there are uncommitted changes
-has_uncommitted_changes() {
-    ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]
-}
-
-# Check if current branch has commits ahead of base
-has_commits_ahead() {
-    local ahead
-    ahead=$(git rev-list --count "${BASE_BRANCH}"..HEAD 2>/dev/null || echo "0")
-    [ "$ahead" -gt 0 ]
-}
+# Source the actual script (which won't run main due to source guard)
+source "$SCRIPT_DIR/git-shipyard.sh"
 EOF
     chmod +x "$TEST_DIR/source_functions.sh"
 }
@@ -91,130 +47,62 @@ create_test_repo() {
 # =============================================================================
 
 @test "parses --base argument correctly" {
-    # Run script with --help to avoid full execution, but capture variable state
-    # We test by running a modified version that just outputs the variables
-    cat > "$TEST_DIR/test_args.sh" << 'EOF'
+    # Create a test wrapper that sources the script and outputs branch variables
+    cat > "$TEST_DIR/test_args.sh" << EOF
 #!/usr/bin/env bash
-BASE_BRANCH="main"
-HEAD_BRANCH="dev"
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --base)
-            BASE_BRANCH="$2"
-            shift 2
-            ;;
-        --head)
-            HEAD_BRANCH="$2"
-            shift 2
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
-echo "BASE_BRANCH=$BASE_BRANCH"
-echo "HEAD_BRANCH=$HEAD_BRANCH"
+# Override main to prevent execution
+main() { :; }
+source "$SCRIPT_DIR/git-shipyard.sh" --base production
+echo "BASE_BRANCH=\$BASE_BRANCH"
+echo "HEAD_BRANCH=\$HEAD_BRANCH"
 EOF
     chmod +x "$TEST_DIR/test_args.sh"
 
-    run "$TEST_DIR/test_args.sh" --base production
+    run "$TEST_DIR/test_args.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"BASE_BRANCH=production"* ]]
     [[ "$output" == *"HEAD_BRANCH=dev"* ]]
 }
 
 @test "parses --head argument correctly" {
-    cat > "$TEST_DIR/test_args.sh" << 'EOF'
+    cat > "$TEST_DIR/test_args.sh" << EOF
 #!/usr/bin/env bash
-BASE_BRANCH="main"
-HEAD_BRANCH="dev"
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --base)
-            BASE_BRANCH="$2"
-            shift 2
-            ;;
-        --head)
-            HEAD_BRANCH="$2"
-            shift 2
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
-echo "BASE_BRANCH=$BASE_BRANCH"
-echo "HEAD_BRANCH=$HEAD_BRANCH"
+main() { :; }
+source "$SCRIPT_DIR/git-shipyard.sh" --head feature-branch
+echo "BASE_BRANCH=\$BASE_BRANCH"
+echo "HEAD_BRANCH=\$HEAD_BRANCH"
 EOF
     chmod +x "$TEST_DIR/test_args.sh"
 
-    run "$TEST_DIR/test_args.sh" --head feature-branch
+    run "$TEST_DIR/test_args.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"BASE_BRANCH=main"* ]]
     [[ "$output" == *"HEAD_BRANCH=feature-branch"* ]]
 }
 
 @test "parses both --base and --head arguments correctly" {
-    cat > "$TEST_DIR/test_args.sh" << 'EOF'
+    cat > "$TEST_DIR/test_args.sh" << EOF
 #!/usr/bin/env bash
-BASE_BRANCH="main"
-HEAD_BRANCH="dev"
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --base)
-            BASE_BRANCH="$2"
-            shift 2
-            ;;
-        --head)
-            HEAD_BRANCH="$2"
-            shift 2
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
-echo "BASE_BRANCH=$BASE_BRANCH"
-echo "HEAD_BRANCH=$HEAD_BRANCH"
+main() { :; }
+source "$SCRIPT_DIR/git-shipyard.sh" --base production --head feature-xyz
+echo "BASE_BRANCH=\$BASE_BRANCH"
+echo "HEAD_BRANCH=\$HEAD_BRANCH"
 EOF
     chmod +x "$TEST_DIR/test_args.sh"
 
-    run "$TEST_DIR/test_args.sh" --base production --head feature-xyz
+    run "$TEST_DIR/test_args.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"BASE_BRANCH=production"* ]]
     [[ "$output" == *"HEAD_BRANCH=feature-xyz"* ]]
 }
 
 @test "uses default values when no arguments provided" {
-    cat > "$TEST_DIR/test_args.sh" << 'EOF'
+    cat > "$TEST_DIR/test_args.sh" << EOF
 #!/usr/bin/env bash
-BASE_BRANCH="main"
-HEAD_BRANCH="dev"
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --base)
-            BASE_BRANCH="$2"
-            shift 2
-            ;;
-        --head)
-            HEAD_BRANCH="$2"
-            shift 2
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
-echo "BASE_BRANCH=$BASE_BRANCH"
-echo "HEAD_BRANCH=$HEAD_BRANCH"
+main() { :; }
+source "$SCRIPT_DIR/git-shipyard.sh"
+echo "BASE_BRANCH=\$BASE_BRANCH"
+echo "HEAD_BRANCH=\$HEAD_BRANCH"
 EOF
     chmod +x "$TEST_DIR/test_args.sh"
 
@@ -539,4 +427,202 @@ EOF
     run "$SCRIPT_DIR/git-shipyard.sh" -h
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage:"* ]]
+}
+
+# =============================================================================
+# Test 6: has_open_prs() function
+# =============================================================================
+
+@test "has_open_prs returns false when no open PRs (mocked)" {
+    # Create test script that mocks gh to return 0 PRs
+    cat > "$TEST_DIR/test_no_prs.sh" << 'EOF'
+#!/usr/bin/env bash
+HEAD_BRANCH="feature-branch"
+
+# Mock gh command
+gh() {
+    echo "0"
+    return 0
+}
+
+has_open_prs() {
+    local count
+    count=$(gh pr list --head "${HEAD_BRANCH}" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+    [ "$count" -gt 0 ]
+}
+
+if has_open_prs; then
+    echo "HAS_OPEN_PRS"
+    exit 0
+else
+    echo "NO_OPEN_PRS"
+    exit 0
+fi
+EOF
+    chmod +x "$TEST_DIR/test_no_prs.sh"
+    
+    run "$TEST_DIR/test_no_prs.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NO_OPEN_PRS"* ]]
+}
+
+@test "has_open_prs returns true when open PRs exist (mocked)" {
+    cat > "$TEST_DIR/test_has_prs.sh" << 'EOF'
+#!/usr/bin/env bash
+HEAD_BRANCH="feature-branch"
+
+# Mock gh command to return 1 PR
+gh() {
+    echo "1"
+    return 0
+}
+
+has_open_prs() {
+    local count
+    count=$(gh pr list --head "${HEAD_BRANCH}" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+    [ "$count" -gt 0 ]
+}
+
+if has_open_prs; then
+    echo "HAS_OPEN_PRS"
+    exit 0
+else
+    echo "NO_OPEN_PRS"
+    exit 0
+fi
+EOF
+    chmod +x "$TEST_DIR/test_has_prs.sh"
+    
+    run "$TEST_DIR/test_has_prs.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"HAS_OPEN_PRS"* ]]
+}
+
+# =============================================================================
+# Test 7: Squash-merge mode detection
+# =============================================================================
+
+@test "detects squash_eligible mode when no uncommitted changes, no open PRs, commits ahead" {
+    cat > "$TEST_DIR/test_squash_mode.sh" << 'EOF'
+#!/usr/bin/env bash
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+# Simulated state: clean working tree, no open PRs, commits ahead
+has_uncommitted_changes() { return 1; }  # false
+has_open_prs() { return 1; }  # false (no open PRs)
+has_commits_ahead() { return 0; }  # true
+
+# Mode detection logic from the script
+if has_uncommitted_changes; then
+    mode="full"
+elif has_commits_ahead; then
+    if ! has_open_prs; then
+        mode="squash_eligible"
+    else
+        mode="pr_only"
+    fi
+else
+    mode="error"
+fi
+
+echo "MODE=$mode"
+EOF
+    chmod +x "$TEST_DIR/test_squash_mode.sh"
+    
+    run "$TEST_DIR/test_squash_mode.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MODE=squash_eligible"* ]]
+}
+
+@test "detects pr_only mode when open PR exists" {
+    cat > "$TEST_DIR/test_pr_mode.sh" << 'EOF'
+#!/usr/bin/env bash
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+# Simulated state: clean working tree, HAS open PRs, commits ahead
+has_uncommitted_changes() { return 1; }  # false
+has_open_prs() { return 0; }  # true (has open PRs)
+has_commits_ahead() { return 0; }  # true
+
+# Mode detection logic from the script
+if has_uncommitted_changes; then
+    mode="full"
+elif has_commits_ahead; then
+    if ! has_open_prs; then
+        mode="squash_eligible"
+    else
+        mode="pr_only"
+    fi
+else
+    mode="error"
+fi
+
+echo "MODE=$mode"
+EOF
+    chmod +x "$TEST_DIR/test_pr_mode.sh"
+    
+    run "$TEST_DIR/test_pr_mode.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MODE=pr_only"* ]]
+}
+
+# =============================================================================
+# Test 8: Conflict handling uses git reset --merge
+# =============================================================================
+
+@test "conflict abort uses git reset --merge not git merge --abort" {
+    # Verify the script uses correct abort command for squash merge
+    run grep -c "git reset --merge" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    [ "$output" -ge 1 ]
+    
+    # Should NOT use git merge --abort for squash conflicts
+    run grep -c "git merge --abort" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$output" -eq 0 ]
+}
+
+# =============================================================================
+# Test 9: Branch cleanup warning message
+# =============================================================================
+
+@test "script contains squash-merge re-merge warning" {
+    run grep "Squash-merge does not record merge history" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "script contains duplicate conflicts warning" {
+    run grep "duplicate conflicts" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+# =============================================================================
+# Test 10: Branch cleanup uses safe delete
+# =============================================================================
+
+@test "branch cleanup uses git branch -d (safe delete)" {
+    run grep "git branch -d" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "script deletes remote branch with --delete flag" {
+    run grep "git push origin --delete" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+# =============================================================================
+# Test 11: Missing argument validation
+# =============================================================================
+
+@test "exits with error for --base without value" {
+    run "$SCRIPT_DIR/git-shipyard.sh" --base
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Missing value for --base"* ]]
+}
+
+@test "exits with error for --head without value" {
+    run "$SCRIPT_DIR/git-shipyard.sh" --head
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Missing value for --head"* ]]
 }
