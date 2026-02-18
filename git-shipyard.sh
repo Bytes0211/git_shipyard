@@ -135,6 +135,85 @@ check_not_on_base_branch() {
     fi
 }
 
+# Get preferred editor
+get_editor() {
+    local editor
+    editor=$(git config core.editor 2>/dev/null)
+    [ -n "$editor" ] && echo "$editor" && return
+    [ -n "$VISUAL" ] && echo "$VISUAL" && return
+    [ -n "$EDITOR" ] && echo "$EDITOR" && return
+    # Fallback to common editors
+    command -v nano &>/dev/null && echo "nano" && return
+    command -v vim &>/dev/null && echo "vim" && return
+    command -v vi &>/dev/null && echo "vi" && return
+    echo "nano"  # Final fallback
+}
+
+# Format commit message preview (truncate multi-line)
+format_message_preview() {
+    local msg="$1"
+    local first_line
+    first_line=$(echo "$msg" | head -1)
+    local line_count
+    line_count=$(echo "$msg" | wc -l)
+    
+    if [ "$line_count" -gt 1 ]; then
+        echo "${first_line} (+$((line_count - 1)) more lines)"
+    else
+        echo "$first_line"
+    fi
+}
+
+# Prompt for commit message (single-line or multi-line via editor)
+get_commit_message() {
+    echo -e "${YELLOW}Enter your commit message:${NC}"
+    
+    # If not interactive (piped input), use simple single-line mode
+    if [ ! -t 0 ]; then
+        read -r -p "> " COMMIT_MESSAGE
+        return
+    fi
+    
+    echo -e "  ${CYAN}1)${NC} Single line (type here)"
+    echo -e "  ${CYAN}2)${NC} Multi-line (open editor)"
+    echo ""
+    
+    local choice
+    while true; do
+        read -r -p "Choose (1/2): " choice
+        case $choice in
+            1)
+                echo ""
+                read -r -p "> " COMMIT_MESSAGE
+                break
+                ;;
+            2)
+                local editor
+                editor=$(get_editor)
+                local tmpfile
+                tmpfile=$(mktemp)
+                
+                # Add template
+                echo "" > "$tmpfile"
+                echo "" >> "$tmpfile"
+                echo "# Enter your commit message above." >> "$tmpfile"
+                echo "# Lines starting with '#' will be ignored." >> "$tmpfile"
+                
+                echo -e "Opening editor (${editor})..."
+                $editor "$tmpfile"
+                
+                # Read and clean message (remove comments and trailing whitespace)
+                COMMIT_MESSAGE=$(grep -v '^#' "$tmpfile" | sed -e 's/[[:space:]]*$//' | sed '/^$/N;/^\n$/d')
+                rm -f "$tmpfile"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice. Enter 1 or 2.${NC}"
+                ;;
+        esac
+    done
+}
+
 # Prompt user to link commit to an existing PR
 link_to_pr() {
     local commit_msg="$1"
@@ -344,8 +423,9 @@ main() {
     
     if [ "$mode" = "full" ]; then
         # Prompt for commit message
-        echo -e "${YELLOW}Enter your commit message:${NC}"
-        read -r -p "> " commit_message
+        COMMIT_MESSAGE=""
+        get_commit_message
+        commit_message="$COMMIT_MESSAGE"
         
         # Validate commit message
         if [ -z "$commit_message" ]; then
@@ -358,11 +438,15 @@ main() {
             read -r -t 0.1 -n 10000 discard 2>/dev/null || true
         fi
         
+        # Format preview for multi-line messages
+        local message_preview
+        message_preview=$(format_message_preview "$commit_message")
+        
         # Confirm action
         echo ""
         echo -e "${BLUE}The following actions will be performed:${NC}"
         echo -e "  1. Stage all changes (git add .)"
-        echo -e "  2. Commit with message: ${CYAN}\"$commit_message\"${NC}"
+        echo -e "  2. Commit with message: ${CYAN}\"$message_preview\"${NC}"
         echo -e "  3. Push to origin/${HEAD_BRANCH}"
         echo -e "  4. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
     else
@@ -448,16 +532,17 @@ main() {
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
     
     # Build PR create command with optional issue link
-    # Note: --body overrides --fill's body, so we generate the body ourselves
     local pr_create_failed=false
     if [ -n "$SELECTED_ISSUE" ]; then
-        # Get commit messages for PR body, then append issue reference
+        # Use explicit --title and --body (not --fill) for clarity
+        local pr_title
+        pr_title=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
         local auto_body
         auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
         local full_body="${auto_body}
 
 Closes #${SELECTED_ISSUE}"
-        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill --body "$full_body")
+        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$full_body")
         [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
         if ! "${pr_cmd[@]}"; then
             pr_create_failed=true
