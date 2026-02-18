@@ -535,8 +535,14 @@ main() {
     local pr_create_failed=false
     if [ -n "$SELECTED_ISSUE" ]; then
         # Use explicit --title and --body (not --fill) for clarity
-        local pr_title
-        pr_title=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
+        local pr_title commit_count
+        commit_count=$(git rev-list --count "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null || echo "1")
+        if [ "$commit_count" -eq 1 ]; then
+            pr_title=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
+        else
+            # Multi-commit: use branch name formatted as title
+            pr_title=$(echo "${HEAD_BRANCH}" | sed 's/[-_]/ /g; s/\b\w/\u&/g')
+        fi
         local auto_body
         auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
         local full_body="${auto_body}
