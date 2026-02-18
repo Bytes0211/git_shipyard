@@ -13,8 +13,10 @@
   - Full workflow when you have uncommitted changes
   - PR-only mode when changes are already committed with open PR
   - **Squash-merge mode** when no open PRs exist (merge directly without PR overhead)
+- 🔗 **PR linking**: Optionally link commits to existing open PRs
+- 🎫 **Issue linking**: Optionally link GitHub issues to new PRs (auto-closes on merge)
 - 📝 **Multi-line commit messages**: Choose single-line input or open your preferred editor
-- ✅ **Pre-flight checks**: Validates environment before execution (git, gh CLI, authentication, remote)
+- ✅ **Pre-flight checks**: Validates environment before execution (git, gh CLI, jq, authentication, remote)
 - 🎨 **Beautiful CLI interface**: Color-coded output with progress indicators
 - 🛡️ **Safe by default**: Confirmation prompts before executing operations
 - 🧹 **Branch cleanup**: Option to delete feature branch after squash-merge
@@ -24,6 +26,7 @@
 
 - **git**: Version control system
 - **gh**: [GitHub CLI](https://cli.github.com/) for PR creation
+- **jq**: [JSON processor](https://jqlang.github.io/jq/) for parsing GitHub API responses
 - **bash**: 4.0 or higher
 - GitHub authentication configured (`gh auth login`)
 
@@ -115,6 +118,7 @@ $ ./git-shipyard.sh
 Running pre-flight checks...
   ✓ git found
   ✓ gh CLI found
+  ✓ jq found
   ✓ Inside git repository
   ✓ GitHub authenticated
   ✓ Remote 'origin' configured
@@ -140,6 +144,7 @@ $ ./git-shipyard.sh
 Running pre-flight checks...
   ✓ git found
   ✓ gh CLI found
+  ✓ jq found
   ✓ Inside git repository
   ✓ GitHub authenticated
   ✓ Remote 'origin' configured
@@ -160,6 +165,7 @@ $ ./git-shipyard.sh
 Running pre-flight checks...
   ✓ git found
   ✓ gh CLI found
+  ✓ jq found
   ✓ Inside git repository
   ✓ GitHub authenticated
   ✓ Remote 'origin' configured

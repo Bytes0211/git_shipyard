@@ -14,17 +14,30 @@ HEAD_BRANCH="dev"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --base)
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo "Error: --base requires a branch name"
+                exit 1
+            fi
             BASE_BRANCH="$2"
             shift 2
             ;;
         --head)
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo "Error: --head requires a branch name"
+                exit 1
+            fi
             HEAD_BRANCH="$2"
             shift 2
             ;;
+        --draft)
+            DRAFT_PR=true
+            shift
+            ;;
         --help|-h)
-            echo "Usage: git-shipyard.sh [--base <branch>] [--head <branch>]"
-            echo "  --base  Base branch for PR (default: main)"
-            echo "  --head  Head branch for PR (default: dev)"
+            echo "Usage: git-shipyard.sh [--base <branch>] [--head <branch>] [--draft]"
+            echo "  --base   Base branch for PR (default: main)"
+            echo "  --head   Head branch for PR (default: dev)"
+            echo "  --draft  Create PR as draft"
             exit 0
             ;;
         *)
@@ -42,21 +55,19 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Spinner function
+# Spinner function (uses bash arithmetic to avoid spawning awk processes)
 spinner() {
     local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    local elapsed=0
-    local duration=${2:-2}
+    local spinstr='|/-\\'
+    local i=0
+    local duration=${2:-20}  # iterations, not seconds
     
-    while (( $(awk "BEGIN {print ($elapsed < $duration)}") )); do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
+    while (( i < duration )); do
+        local char=${spinstr:i%4:1}
+        printf " [%c]  " "$char"
+        sleep 0.1
         printf "\b\b\b\b\b\b"
-        elapsed=$(awk "BEGIN {print $elapsed + $delay}")
+        ((i++))
     done
     printf "    \b\b\b\b"
 }
@@ -105,6 +116,22 @@ check_gh_auth() {
 check_remote() {
     if ! git remote get-url origin &> /dev/null; then
         error_exit "No 'origin' remote found. Please add a remote repository."
+    fi
+}
+
+# Check if in detached HEAD state
+check_not_detached() {
+    if ! git symbolic-ref --short HEAD &>/dev/null; then
+        error_exit "Cannot run in detached HEAD state. Checkout a branch first."
+    fi
+}
+
+# Check if on base branch (would cause main..main = 0 commits)
+check_not_on_base_branch() {
+    local current_branch
+    current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+    if [ "$current_branch" = "$BASE_BRANCH" ]; then
+        error_exit "Cannot run on base branch '$BASE_BRANCH'. Checkout a feature branch first."
     fi
 }
 
@@ -172,18 +199,21 @@ link_to_pr() {
     
     echo ""
     echo -e "${BLUE}Linking commit to PR #${selected_pr}...${NC}"
+    echo -e "  ${YELLOW}⚠${NC}  Warning: This will amend the commit and change its SHA"
+    
+    # Store original commit hash for potential revert
+    local original_hash
+    original_hash=$(git rev-parse HEAD)
     
     # Amend the commit message to include PR reference
     local new_message="${commit_msg}
 
 Part of #${selected_pr}"
     
-    if ! git commit --amend -m "$new_message" --no-edit 2>/dev/null; then
-        # If --no-edit fails, try with the full message
-        if ! git commit --amend -m "$new_message"; then
-            echo -e "  ${RED}✗${NC} Failed to amend commit"
-            return 1
-        fi
+    if ! git commit --amend -m "$new_message"; then
+        echo -e "  ${RED}✗${NC} Failed to amend commit"
+        echo -e "  ${YELLOW}ℹ${NC} Original commit preserved at: ${original_hash}"
+        return 1
     fi
     
     echo -e "  ${GREEN}✓${NC} Commit linked to PR #${selected_pr}: ${selected_title}"
@@ -260,6 +290,9 @@ select_issue() {
 
 # Main script
 main() {
+    # Trap for unexpected errors (inside main for source guard compatibility)
+    trap 'error_exit "An unexpected error occurred."' ERR
+    
     clear
     
     # Welcome banner
@@ -282,6 +315,12 @@ main() {
     
     check_git_repo
     echo -e "  ${GREEN}✓${NC} Inside git repository"
+    
+    check_not_detached
+    echo -e "  ${GREEN}✓${NC} On a valid branch"
+    
+    check_not_on_base_branch
+    echo -e "  ${GREEN}✓${NC} Not on base branch"
     
     check_gh_auth
     echo -e "  ${GREEN}✓${NC} GitHub authenticated"
@@ -360,6 +399,8 @@ main() {
         
         echo -e "${BLUE}Committing...${NC}"
         if ! git commit -m "$commit_message"; then
+            echo -e "  ${RED}✗${NC} Commit failed"
+            echo -e "  ${YELLOW}ℹ${NC} Your changes are still staged. To unstage: git reset HEAD"
             error_exit "Commit failed. Check your commit message."
         fi
         echo -e "  ${GREEN}✓${NC} Changes committed"
@@ -368,15 +409,33 @@ main() {
         link_to_pr "$commit_message" || true
         
         echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
-        if ! git push -u origin "${HEAD_BRANCH}"; then
-            error_exit "Push failed. Check remote configuration."
+        local push_output
+        if ! push_output=$(git push -u origin "${HEAD_BRANCH}" 2>&1); then
+            if echo "$push_output" | grep -q "rejected\|non-fast-forward"; then
+                echo -e "  ${RED}✗${NC} Push rejected - remote has changes you don't have locally"
+                echo -e "  ${YELLOW}ℹ${NC} Try: git pull --rebase origin ${HEAD_BRANCH}"
+                error_exit "Push failed due to remote changes."
+            else
+                echo -e "  ${RED}✗${NC} Push failed"
+                echo "$push_output" >&2
+                error_exit "Push failed. Check remote configuration."
+            fi
         fi
         echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
     else
         # PR only: push if needed, then create PR
         echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
-        if ! git push -u origin "${HEAD_BRANCH}" 2>/dev/null; then
-            echo -e "  ${YELLOW}ℹ${NC} Already up to date or pushed"
+        local push_output
+        if ! push_output=$(git push -u origin "${HEAD_BRANCH}" 2>&1); then
+            if echo "$push_output" | grep -q "Everything up-to-date"; then
+                echo -e "  ${YELLOW}ℹ${NC} Already up to date"
+            elif echo "$push_output" | grep -q "rejected\|non-fast-forward"; then
+                echo -e "  ${RED}✗${NC} Push rejected - remote has changes you don't have locally"
+                echo -e "  ${YELLOW}ℹ${NC} Try: git pull --rebase origin ${HEAD_BRANCH}"
+                error_exit "Push failed due to remote changes."
+            else
+                echo -e "  ${YELLOW}ℹ${NC} Already up to date or pushed"
+            fi
         else
             echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
         fi
@@ -389,12 +448,29 @@ main() {
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
     
     # Build PR create command with optional issue link
-    local pr_create_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill)
+    # Note: --body overrides --fill's body, so we generate the body ourselves
+    local pr_create_failed=false
     if [ -n "$SELECTED_ISSUE" ]; then
-        pr_create_cmd+=(--body "Closes #${SELECTED_ISSUE}")
+        # Get commit messages for PR body, then append issue reference
+        local auto_body
+        auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
+        local full_body="${auto_body}
+
+Closes #${SELECTED_ISSUE}"
+        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill --body "$full_body")
+        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+        if ! "${pr_cmd[@]}"; then
+            pr_create_failed=true
+        fi
+    else
+        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill)
+        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+        if ! "${pr_cmd[@]}"; then
+            pr_create_failed=true
+        fi
     fi
     
-    if ! "${pr_create_cmd[@]}"; then
+    if [ "$pr_create_failed" = true ]; then
         # Check if PR already exists
         if gh pr view "${HEAD_BRANCH}" &>/dev/null; then
             echo -e "${YELLOW}─────────────────────────────────────────${NC}"
@@ -426,8 +502,8 @@ main() {
     echo -e "${YELLOW}Goodbye!${NC}"
 }
 
-# Trap for unexpected errors
-trap 'error_exit "An unexpected error occurred."' ERR
-
-# Run main function
-main "$@"
+# Source guard: only run main when executed directly (not sourced)
+# This allows tests to source the script and test functions individually
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

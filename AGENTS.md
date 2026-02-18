@@ -9,7 +9,7 @@ Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates th
 ## Architecture
 
 ### Single Script Design
-The entire application is contained in `git-shipyard.sh` with no external dependencies beyond standard Unix tools, git, and GitHub CLI (gh).
+The entire application is contained in `git-shipyard.sh` with no external dependencies beyond standard Unix tools, git, GitHub CLI (gh), and jq (for JSON parsing).
 
 ### Execution Modes
 The script automatically detects and switches between three operational modes:
@@ -47,8 +47,8 @@ git commit -m "test"
 
 ### Running Unit Tests
 ```bash
-# Run all BATS tests (33 tests)
-bats test/git-shipyard.bats
+# Run all BATS tests (34 tests)
+bats test/git-shipyard.sh.bats
 ```
 
 ### Installation Testing
@@ -81,8 +81,13 @@ git shipyard --help
 ### State Detection Functions
 - `has_uncommitted_changes()`: Checks git diff (staged/unstaged) and untracked files
 - `has_commits_ahead()`: Uses `git rev-list --count BASE..HEAD` to detect unpushed commits
-- `has_open_prs()`: Uses `gh pr list --head BRANCH --state open` to check for existing PRs
 - These functions determine which workflow mode executes
+
+### PR and Issue Linking Functions
+- `link_to_pr()`: After committing, prompts user to link the commit to an existing open PR by amending the commit message with `Part of #<PR>`
+- `select_issue()`: Before PR creation, prompts user to link a GitHub issue to the new PR using `Closes #<issue>` in PR body
+- Both functions list available items via `gh pr list` / `gh issue list` and parse JSON with `jq`
+- Option "0" (None) skips linking in both cases
 
 ### Source Guard
 The script uses a source guard pattern for testability:

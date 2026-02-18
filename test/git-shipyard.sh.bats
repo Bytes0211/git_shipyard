@@ -24,10 +24,13 @@ setup() {
     git config user.email "test@example.com"
     git config user.name "Test User"
     
-    # Create initial commit
+    # Create initial commit on main
     echo "initial" > README.md
     git add README.md
     git commit --quiet -m "Initial commit"
+    
+    # Create and checkout dev branch (script checks we're not on base branch)
+    git checkout -b dev --quiet
     
     # Add origin remote
     git remote add origin https://github.com/test/repo.git
@@ -71,6 +74,17 @@ EOF
 cat
 EOF
     chmod +x "$TEST_TEMP_DIR/bin/jq"
+    
+    # Mock git to intercept push (pass through other commands)
+    cat > "$TEST_TEMP_DIR/bin/git" << 'EOF'
+#!/bin/bash
+if [ "$1" = "push" ]; then
+    echo "Everything up-to-date"
+    exit 0
+fi
+/usr/bin/git "$@"
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/git"
     
     export PATH="$TEST_TEMP_DIR/bin:$PATH"
 }
@@ -437,6 +451,16 @@ else
 fi
 EOF
     chmod +x "$TEST_TEMP_DIR/bin/jq"
+    
+    # Mock git push to succeed
+    cat > "$TEST_TEMP_DIR/bin/git" << 'EOF'
+#!/bin/bash
+if [ "$1" = "push" ]; then
+    exit 0
+fi
+/usr/bin/git "$@"
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/git"
     export PATH="$TEST_TEMP_DIR/bin:$PATH"
     
     run bash -c "echo -e 'Test commit\ny\n0\n0' | $SCRIPT_PATH"
