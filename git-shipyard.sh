@@ -14,19 +14,30 @@ HEAD_BRANCH="dev"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --base)
-            [[ -n "${2:-}" ]] || { echo "Error: Missing value for --base"; exit 1; }
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo "Error: --base requires a branch name"
+                exit 1
+            fi
             BASE_BRANCH="$2"
             shift 2
             ;;
         --head)
-            [[ -n "${2:-}" ]] || { echo "Error: Missing value for --head"; exit 1; }
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo "Error: --head requires a branch name"
+                exit 1
+            fi
             HEAD_BRANCH="$2"
             shift 2
             ;;
+        --draft)
+            DRAFT_PR=true
+            shift
+            ;;
         --help|-h)
-            echo "Usage: git-shipyard.sh [--base <branch>] [--head <branch>]"
-            echo "  --base  Base branch for PR (default: main)"
-            echo "  --head  Head branch for PR (default: dev)"
+            echo "Usage: git-shipyard.sh [--base <branch>] [--head <branch>] [--draft]"
+            echo "  --base   Base branch for PR (default: main)"
+            echo "  --head   Head branch for PR (default: dev)"
+            echo "  --draft  Create PR as draft"
             exit 0
             ;;
         *)
@@ -44,20 +55,19 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Spinner function
+# Spinner function (uses bash arithmetic to avoid spawning awk processes)
 spinner() {
-    local delay=0.1
-    local spinstr='|/-\'
-    local elapsed=0
-    local duration=${1:-2}
+    local pid=$1
+    local spinstr='|/-\\'
+    local i=0
+    local duration=${2:-20}  # iterations, not seconds
     
-    while (( $(awk "BEGIN {print ($elapsed < $duration)}") )); do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
+    while (( i < duration )); do
+        local char=${spinstr:i%4:1}
+        printf " [%c]  " "$char"
+        sleep 0.1
         printf "\b\b\b\b\b\b"
-        elapsed=$(awk "BEGIN {print $elapsed + $delay}")
+        ((i++))
     done
     printf "    \b\b\b\b"
 }
@@ -95,13 +105,6 @@ has_commits_ahead() {
     [ "$ahead" -gt 0 ]
 }
 
-# Check if there are open PRs for the head branch
-has_open_prs() {
-    local count
-    count=$(gh pr list --head "${HEAD_BRANCH}" --state open --json number --jq 'length' 2>/dev/null || echo "0")
-    [ "$count" -gt 0 ]
-}
-
 # Check GitHub authentication
 check_gh_auth() {
     if ! gh auth status &> /dev/null; then
@@ -116,89 +119,42 @@ check_remote() {
     fi
 }
 
-# Get commit message (supports single-line or multi-line via editor)
-# Usage: get_commit_message "prompt_text" variable_name
-get_commit_message() {
-    local prompt="$1"
-    local -n result_var="$2"
-    
-    echo -e "${YELLOW}${prompt}${NC}"
-    echo -e "  ${CYAN}1.${NC} Single line (type here)"
-    echo -e "  ${CYAN}2.${NC} Multi-line (open editor)"
-    echo ""
-    
-    local input_choice
-    while true; do
-        read -r -p "Choose (1/2): " input_choice
-        case "$input_choice" in
-            1)
-                # Single-line input
-                read -r -p "> " result_var
-                # Flush any remaining input
-                read -r -t 0.1 -n 10000 discard 2>/dev/null || true
-                break
-                ;;
-            2)
-                # Multi-line via editor
-                local tmpfile
-                tmpfile=$(mktemp /tmp/git-shipyard-msg.XXXXXX)
-                
-                # Add template/instructions to temp file
-                cat > "$tmpfile" << 'TEMPLATE'
-
-# Enter your commit message above.
-# Lines starting with '#' will be ignored.
-# Save and close the editor to continue.
-# Leave empty to abort.
-TEMPLATE
-                
-                # Determine editor (default to nano)
-                local editor="nano"
-                
-                # Check if editor exists
-                if ! command -v "${editor%% *}" &> /dev/null; then
-                    # Fallback chain
-                    for e in nano vim vi; do
-                        if command -v "$e" &> /dev/null; then
-                            editor="$e"
-                            break
-                        fi
-                    done
-                fi
-                
-                echo -e "${BLUE}Opening editor (${editor})...${NC}"
-                
-                # Open editor
-                if ! $editor "$tmpfile"; then
-                    rm -f "$tmpfile"
-                    error_exit "Editor exited with an error."
-                fi
-                
-                # Read message, stripping comments and leading/trailing whitespace
-                result_var=$(grep -v '^#' "$tmpfile" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-                
-                rm -f "$tmpfile"
-                break
-                ;;
-            *)
-                echo -e "${RED}Invalid choice. Please enter 1 or 2.${NC}"
-                ;;
-        esac
-    done
-    
-    # Validate non-empty
-    if [ -z "$result_var" ]; then
-        error_exit "Commit message cannot be empty."
+# Check if in detached HEAD state
+check_not_detached() {
+    if ! git symbolic-ref --short HEAD &>/dev/null; then
+        error_exit "Cannot run in detached HEAD state. Checkout a branch first."
     fi
 }
 
-# Format commit message for display (truncate multi-line)
+# Check if on base branch (would cause main..main = 0 commits)
+check_not_on_base_branch() {
+    local current_branch
+    current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+    if [ "$current_branch" = "$BASE_BRANCH" ]; then
+        error_exit "Cannot run on base branch '$BASE_BRANCH'. Checkout a feature branch first."
+    fi
+}
+
+# Get preferred editor
+get_editor() {
+    local editor
+    editor=$(git config core.editor 2>/dev/null)
+    [ -n "$editor" ] && echo "$editor" && return
+    [ -n "$VISUAL" ] && echo "$VISUAL" && return
+    [ -n "$EDITOR" ] && echo "$EDITOR" && return
+    # Fallback to common editors
+    command -v nano &>/dev/null && echo "nano" && return
+    command -v vim &>/dev/null && echo "vim" && return
+    command -v vi &>/dev/null && echo "vi" && return
+    echo "nano"  # Final fallback
+}
+
+# Format commit message preview (truncate multi-line)
 format_message_preview() {
     local msg="$1"
     local first_line
+    first_line=$(echo "$msg" | head -1)
     local line_count
-    
-    first_line=$(echo "$msg" | head -n1)
     line_count=$(echo "$msg" | wc -l)
     
     if [ "$line_count" -gt 1 ]; then
@@ -208,12 +164,215 @@ format_message_preview() {
     fi
 }
 
-# Main script
-main() {
-    # Trap for unexpected errors (only active during main execution)
-    trap 'error_exit "An unexpected error occurred."' ERR
+# Prompt for commit message (single-line or multi-line via editor)
+get_commit_message() {
+    echo -e "${YELLOW}Enter your commit message:${NC}"
+    
+    # If not interactive (piped input), use simple single-line mode
+    if [ ! -t 0 ]; then
+        read -r -p "> " COMMIT_MESSAGE
+        return
+    fi
+    
+    echo -e "  ${CYAN}1)${NC} Single line (type here)"
+    echo -e "  ${CYAN}2)${NC} Multi-line (open editor)"
+    echo ""
+    
+    local choice
+    while true; do
+        read -r -p "Choose (1/2): " choice
+        case $choice in
+            1)
+                echo ""
+                read -r -p "> " COMMIT_MESSAGE
+                break
+                ;;
+            2)
+                local editor
+                editor=$(get_editor)
+                local tmpfile
+                tmpfile=$(mktemp)
+                
+                # Add template
+                echo "" > "$tmpfile"
+                echo "" >> "$tmpfile"
+                echo "# Enter your commit message above." >> "$tmpfile"
+                echo "# Lines starting with '#' will be ignored." >> "$tmpfile"
+                
+                echo -e "Opening editor (${editor})..."
+                $editor "$tmpfile"
+                
+                # Read and clean message (remove comments and trailing whitespace)
+                COMMIT_MESSAGE=$(grep -v '^#' "$tmpfile" | sed -e 's/[[:space:]]*$//' | sed '/^$/N;/^\n$/d')
+                rm -f "$tmpfile"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice. Enter 1 or 2.${NC}"
+                ;;
+        esac
+    done
+}
+
+# Prompt user to link commit to an existing PR
+link_to_pr() {
+    local commit_msg="$1"
     
     echo ""
+    echo -e "${BLUE}Fetching open pull requests...${NC}"
+    
+    # Get open PRs as JSON and parse them
+    local pr_list
+    pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
+    
+    if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
+        echo -e "  ${YELLOW}ℹ${NC} No open pull requests found"
+        return 1
+    fi
+    
+    # Parse PR numbers and titles into arrays
+    local pr_numbers=()
+    local pr_titles=()
+    while IFS= read -r line; do
+        pr_numbers+=("$line")
+    done < <(echo "$pr_list" | jq -r '.[].number')
+    
+    while IFS= read -r line; do
+        pr_titles+=("$line")
+    done < <(echo "$pr_list" | jq -r '.[].title')
+    
+    local pr_count=${#pr_numbers[@]}
+    
+    echo ""
+    echo -e "${YELLOW}Link this commit to an existing PR?${NC}"
+    echo ""
+    
+    # Display PR options
+    for i in "${!pr_numbers[@]}"; do
+        printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}"
+    done
+    echo ""
+    printf "  ${CYAN}%2d)${NC} None (skip linking)\n" "0"
+    echo ""
+    
+    # Get user selection
+    local selection
+    while true; do
+        read -r -p "Select PR [0-${pr_count}]: " selection
+        
+        # Validate input
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$pr_count" ]; then
+            break
+        fi
+        echo -e "${RED}Invalid selection. Please enter a number between 0 and ${pr_count}.${NC}"
+    done
+    
+    # Handle selection
+    if [ "$selection" -eq 0 ]; then
+        echo -e "  ${YELLOW}ℹ${NC} Skipping PR link"
+        return 1
+    fi
+    
+    local selected_pr=${pr_numbers[$((selection - 1))]}
+    local selected_title=${pr_titles[$((selection - 1))]}
+    
+    echo ""
+    echo -e "${BLUE}Linking commit to PR #${selected_pr}...${NC}"
+    echo -e "  ${YELLOW}⚠${NC}  Warning: This will amend the commit and change its SHA"
+    
+    # Store original commit hash for potential revert
+    local original_hash
+    original_hash=$(git rev-parse HEAD)
+    
+    # Amend the commit message to include PR reference
+    local new_message="${commit_msg}
+
+Part of #${selected_pr}"
+    
+    if ! git commit --amend -m "$new_message"; then
+        echo -e "  ${RED}✗${NC} Failed to amend commit"
+        echo -e "  ${YELLOW}ℹ${NC} Original commit preserved at: ${original_hash}"
+        return 1
+    fi
+    
+    echo -e "  ${GREEN}✓${NC} Commit linked to PR #${selected_pr}: ${selected_title}"
+    return 0
+}
+
+# Prompt user to link an issue to the PR
+# Sets global SELECTED_ISSUE variable
+SELECTED_ISSUE=""
+select_issue() {
+    SELECTED_ISSUE=""
+    
+    echo ""
+    echo -e "${BLUE}Fetching open issues...${NC}"
+    
+    # Get open issues as JSON and parse them
+    local issue_list
+    issue_list=$(gh issue list --state open --json number,title --limit 20 2>/dev/null)
+    
+    if [ -z "$issue_list" ] || [ "$issue_list" = "[]" ]; then
+        echo -e "  ${YELLOW}ℹ${NC} No open issues found"
+        return 1
+    fi
+    
+    # Parse issue numbers and titles into arrays
+    local issue_numbers=()
+    local issue_titles=()
+    while IFS= read -r line; do
+        issue_numbers+=("$line")
+    done < <(echo "$issue_list" | jq -r '.[].number')
+    
+    while IFS= read -r line; do
+        issue_titles+=("$line")
+    done < <(echo "$issue_list" | jq -r '.[].title')
+    
+    local issue_count=${#issue_numbers[@]}
+    
+    echo ""
+    echo -e "${YELLOW}Link an issue to this PR?${NC}"
+    echo ""
+    
+    # Display issue options
+    for i in "${!issue_numbers[@]}"; do
+        printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${issue_numbers[$i]}" "${issue_titles[$i]}"
+    done
+    echo ""
+    printf "  ${CYAN}%2d)${NC} None (skip linking)\n" "0"
+    echo ""
+    
+    # Get user selection
+    local selection
+    while true; do
+        read -r -p "Select issue [0-${issue_count}]: " selection
+        
+        # Validate input
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$issue_count" ]; then
+            break
+        fi
+        echo -e "${RED}Invalid selection. Please enter a number between 0 and ${issue_count}.${NC}"
+    done
+    
+    # Handle selection
+    if [ "$selection" -eq 0 ]; then
+        echo -e "  ${YELLOW}ℹ${NC} Skipping issue link"
+        return 1
+    fi
+    
+    SELECTED_ISSUE=${issue_numbers[$((selection - 1))]}
+    local selected_title=${issue_titles[$((selection - 1))]}
+    
+    echo -e "  ${GREEN}✓${NC} Will link issue #${SELECTED_ISSUE}: ${selected_title}"
+    return 0
+}
+
+# Main script
+main() {
+    # Trap for unexpected errors (inside main for source guard compatibility)
+    trap 'error_exit "An unexpected error occurred."' ERR
+    
+    clear
     
     # Welcome banner
     echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
@@ -230,8 +389,17 @@ main() {
     check_command "gh"
     echo -e "  ${GREEN}✓${NC} gh CLI found"
     
+    check_command "jq"
+    echo -e "  ${GREEN}✓${NC} jq found"
+    
     check_git_repo
     echo -e "  ${GREEN}✓${NC} Inside git repository"
+    
+    check_not_detached
+    echo -e "  ${GREEN}✓${NC} On a valid branch"
+    
+    check_not_on_base_branch
+    echo -e "  ${GREEN}✓${NC} Not on base branch"
     
     check_gh_auth
     echo -e "  ${GREEN}✓${NC} GitHub authenticated"
@@ -245,77 +413,42 @@ main() {
         mode="full"
         echo -e "  ${GREEN}✓${NC} Uncommitted changes detected"
     elif has_commits_ahead; then
-        # Check if eligible for squash-merge (no open PRs)
-        if ! has_open_prs; then
-            mode="squash_eligible"
-            echo -e "  ${GREEN}✓${NC} Commits ahead of ${BASE_BRANCH} (no open PRs)"
-        else
-            mode="pr_only"
-            echo -e "  ${GREEN}✓${NC} Commits ahead of ${BASE_BRANCH} (open PR exists)"
-        fi
+        mode="pr_only"
+        echo -e "  ${GREEN}✓${NC} Commits ahead of ${BASE_BRANCH} (already committed)"
     else
-        error_exit "No changes to commit and no commits ahead of ${BASE_BRANCH}."
+        error_exit "No changes to commit and no commits ahead of main."
     fi
     
     echo ""
     
-    # Handle squash-eligible mode - prompt user for choice
-    if [ "$mode" = "squash_eligible" ]; then
-        echo -e "${BLUE}No uncommitted changes detected.${NC}"
-        echo -e "${BLUE}No open PRs for ${HEAD_BRANCH}.${NC}"
-        echo -e "${BLUE}Your branch is ahead of ${BASE_BRANCH}.${NC}"
-        echo ""
-        echo -e "${YELLOW}How would you like to proceed?${NC}"
-        echo -e "  1. Create a Pull Request (existing workflow)"
-        echo -e "  2. Squash-merge into ${BASE_BRANCH}"
-        echo ""
-        
-        while true; do
-            read -r -p "Choose (1/2): " choice
-            case "$choice" in
-                1)
-                    mode="pr_only"
-                    break
-                    ;;
-                2)
-                    mode="squash_merge"
-                    break
-                    ;;
-                *)
-                    echo -e "${RED}Invalid choice. Please enter 1 or 2.${NC}"
-                    ;;
-            esac
-        done
-        echo ""
-    fi
-    
     if [ "$mode" = "full" ]; then
         # Prompt for commit message
-        local commit_message
-        get_commit_message "Enter your commit message:" commit_message
+        COMMIT_MESSAGE=""
+        get_commit_message
+        commit_message="$COMMIT_MESSAGE"
+        
+        # Validate commit message
+        if [ -z "$commit_message" ]; then
+            error_exit "Commit message cannot be empty."
+        fi
+        
+        # Flush any remaining input (handles pasted multi-line text)
+        # Only flush if running interactively (not piped)
+        if [ -t 0 ]; then
+            read -r -t 0.1 -n 10000 discard 2>/dev/null || true
+        fi
+        
+        # Format preview for multi-line messages
+        local message_preview
+        message_preview=$(format_message_preview "$commit_message")
         
         # Confirm action
-        local msg_preview
-        msg_preview=$(format_message_preview "$commit_message")
         echo ""
         echo -e "${BLUE}The following actions will be performed:${NC}"
         echo -e "  1. Stage all changes (git add .)"
-        echo -e "  2. Commit with message: ${CYAN}\"$msg_preview\"${NC}"
+        echo -e "  2. Commit with message: ${CYAN}\"$message_preview\"${NC}"
         echo -e "  3. Push to origin/${HEAD_BRANCH}"
         echo -e "  4. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
-    elif [ "$mode" = "squash_merge" ]; then
-        # Squash-merge mode - prompt for commit message
-        local squash_message
-        get_commit_message "Enter squash-merge commit message:" squash_message
-        
-        local msg_preview
-        msg_preview=$(format_message_preview "$squash_message")
-        echo ""
-        echo -e "${BLUE}The following actions will be performed:${NC}"
-        echo -e "  1. Switch to ${BASE_BRANCH}"
-        echo -e "  2. Squash-merge ${HEAD_BRANCH} into ${BASE_BRANCH}"
-        echo -e "  3. Commit with message: ${CYAN}\"$msg_preview\"${NC}"
-        echo -e "  4. Push ${BASE_BRANCH} to origin"
     else
         # PR only mode
         echo -e "${BLUE}The following actions will be performed:${NC}"
@@ -336,7 +469,7 @@ main() {
     
     # Spinner pause
     echo -e "${BLUE}Preparing to ship...${NC}"
-    spinner 2
+    spinner $$ 2
     echo -e "  ${GREEN}✓${NC} Ready"
     echo ""
     
@@ -350,119 +483,85 @@ main() {
         
         echo -e "${BLUE}Committing...${NC}"
         if ! git commit -m "$commit_message"; then
+            echo -e "  ${RED}✗${NC} Commit failed"
+            echo -e "  ${YELLOW}ℹ${NC} Your changes are still staged. To unstage: git reset HEAD"
             error_exit "Commit failed. Check your commit message."
         fi
         echo -e "  ${GREEN}✓${NC} Changes committed"
         
+        # Offer to link commit to existing PR
+        link_to_pr "$commit_message" || true
+        
         echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
-        if ! git push -u origin "${HEAD_BRANCH}"; then
-            error_exit "Push failed. Check remote configuration."
-        fi
-        echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
-    elif [ "$mode" = "squash_merge" ]; then
-        # Squash-merge workflow
-        local original_branch="$HEAD_BRANCH"
-        
-        echo -e "${BLUE}Switching to ${BASE_BRANCH}...${NC}"
-        if ! git checkout "${BASE_BRANCH}"; then
-            error_exit "Failed to switch to ${BASE_BRANCH}."
-        fi
-        echo -e "  ${GREEN}✓${NC} Switched to ${BASE_BRANCH}"
-        
-        echo -e "${BLUE}Squash-merging ${original_branch}...${NC}"
-        if ! git merge --squash "${original_branch}" 2>/dev/null; then
-            # Merge conflict detected
-            echo -e "  ${RED}✗${NC} Merge conflicts detected"
-            echo ""
-            echo -e "${YELLOW}Unable to squash-merge automatically.${NC}"
-            read -r -p "Would you like to create a Pull Request instead? (y/N): " pr_fallback
-            
-            # Abort the merge using reset (--squash doesn't set MERGE_HEAD)
-            git reset --merge
-            git checkout "${original_branch}"
-            
-            if [[ "$pr_fallback" =~ ^[Yy]$ ]]; then
-                echo ""
-                echo -e "${BLUE}Falling back to PR workflow...${NC}"
-                mode="pr_only"
-                # Continue to PR creation below
+        local push_output
+        if ! push_output=$(git push -u origin "${HEAD_BRANCH}" 2>&1); then
+            if echo "$push_output" | grep -q "rejected\|non-fast-forward"; then
+                echo -e "  ${RED}✗${NC} Push rejected - remote has changes you don't have locally"
+                echo -e "  ${YELLOW}ℹ${NC} Try: git pull --rebase origin ${HEAD_BRANCH}"
+                error_exit "Push failed due to remote changes."
             else
-                echo ""
-                echo -e "${YELLOW}Squash-merge aborted. Returned to ${original_branch}.${NC}"
-                echo -e "${YELLOW}Goodbye!${NC}"
-                exit 0
-            fi
-        else
-            echo -e "  ${GREEN}✓${NC} Squash-merge prepared"
-            
-            echo -e "${BLUE}Committing squash-merge...${NC}"
-            if ! git commit -m "$squash_message"; then
-                error_exit "Commit failed."
-            fi
-            echo -e "  ${GREEN}✓${NC} Committed"
-            
-            echo -e "${BLUE}Pushing ${BASE_BRANCH} to origin...${NC}"
-            if ! git push origin "${BASE_BRANCH}"; then
+                echo -e "  ${RED}✗${NC} Push failed"
+                echo "$push_output" >&2
                 error_exit "Push failed. Check remote configuration."
             fi
-            echo -e "  ${GREEN}✓${NC} Pushed to origin/${BASE_BRANCH}"
-            
-            echo ""
-            echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-            echo -e "${GREEN}║     ✓ Squash-merge completed!          ║${NC}"
-            echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
-            echo ""
-            
-            # Branch cleanup prompt
-            read -r -p "Delete feature branch '${original_branch}'? (y/N): " delete_branch
-            
-            if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
-                echo ""
-                echo -e "${BLUE}Deleting local branch ${original_branch}...${NC}"
-                if ! git branch -d "${original_branch}"; then
-                    echo -e "  ${YELLOW}⚠${NC} Could not delete local branch (may need -D)"
-                else
-                    echo -e "  ${GREEN}✓${NC} Local branch deleted"
-                fi
-                
-                echo -e "${BLUE}Deleting remote branch ${original_branch}...${NC}"
-                if ! git push origin --delete "${original_branch}" 2>/dev/null; then
-                    echo -e "  ${YELLOW}⚠${NC} Could not delete remote branch (may not exist)"
-                else
-                    echo -e "  ${GREEN}✓${NC} Remote branch deleted"
-                fi
+        fi
+        echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
+    else
+        # PR only: push if needed, then create PR
+        echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
+        local push_output
+        if ! push_output=$(git push -u origin "${HEAD_BRANCH}" 2>&1); then
+            if echo "$push_output" | grep -q "Everything up-to-date"; then
+                echo -e "  ${YELLOW}ℹ${NC} Already up to date"
+            elif echo "$push_output" | grep -q "rejected\|non-fast-forward"; then
+                echo -e "  ${RED}✗${NC} Push rejected - remote has changes you don't have locally"
+                echo -e "  ${YELLOW}ℹ${NC} Try: git pull --rebase origin ${HEAD_BRANCH}"
+                error_exit "Push failed due to remote changes."
             else
-                # Return to feature branch and warn about re-merge issues
-                git checkout "${original_branch}"
-                echo ""
-                echo -e "  ${YELLOW}⚠${NC} Note: Squash-merge does not record merge history."
-                echo -e "    Re-merging this branch later may cause duplicate conflicts."
+                echo -e "  ${YELLOW}ℹ${NC} Already up to date or pushed"
             fi
-            
-            echo ""
-            echo -e "${CYAN}Summary:${NC}"
-            echo -e "  • Squash-merged ${original_branch} into ${BASE_BRANCH}"
-            echo -e "  • Pushed to origin/${BASE_BRANCH}"
-            echo ""
-            echo -e "${YELLOW}Goodbye!${NC}"
-            exit 0
+        else
+            echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
         fi
     fi
     
-    # PR workflow (for full, pr_only, or squash_merge fallback)
-    if [ "$mode" = "pr_only" ]; then
-        # PR only: push if needed, then create PR
-        echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
-        if ! git push -u origin "${HEAD_BRANCH}"; then
-            error_exit "Push failed. Check remote configuration."
-        fi
-        echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
-    fi
+    # Offer to link an issue to the PR
+    select_issue || true
     
     echo -e "${BLUE}Creating pull request...${NC}"
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
     
-    if ! gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill; then
+    # Build PR create command with optional issue link
+    local pr_create_failed=false
+    if [ -n "$SELECTED_ISSUE" ]; then
+        # Use explicit --title and --body (not --fill) for clarity
+        local pr_title commit_count
+        commit_count=$(git rev-list --count "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null || echo "1")
+        if [ "$commit_count" -eq 1 ]; then
+            pr_title=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
+        else
+            # Multi-commit: use branch name formatted as title
+            pr_title=$(echo "${HEAD_BRANCH}" | sed 's/[-_]/ /g; s/\b\w/\u&/g')
+        fi
+        local auto_body
+        auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
+        local full_body="${auto_body}
+
+Closes #${SELECTED_ISSUE}"
+        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$full_body")
+        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+        if ! "${pr_cmd[@]}"; then
+            pr_create_failed=true
+        fi
+    else
+        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill)
+        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+        if ! "${pr_cmd[@]}"; then
+            pr_create_failed=true
+        fi
+    fi
+    
+    if [ "$pr_create_failed" = true ]; then
         # Check if PR already exists
         if gh pr view "${HEAD_BRANCH}" &>/dev/null; then
             echo -e "${YELLOW}─────────────────────────────────────────${NC}"
@@ -487,11 +586,15 @@ main() {
     fi
     echo -e "  • Pushed to origin/${HEAD_BRANCH}"
     echo -e "  • Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
+    if [ -n "$SELECTED_ISSUE" ]; then
+        echo -e "  • Linked to issue #${SELECTED_ISSUE} (closes on merge)"
+    fi
     echo ""
     echo -e "${YELLOW}Goodbye!${NC}"
 }
 
-# Run main function only when executed directly (not sourced)
+# Source guard: only run main when executed directly (not sourced)
+# This allows tests to source the script and test functions individually
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
