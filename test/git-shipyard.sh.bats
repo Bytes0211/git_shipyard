@@ -75,11 +75,14 @@ cat
 EOF
     chmod +x "$TEST_TEMP_DIR/bin/jq"
     
-    # Mock git to intercept push (pass through other commands)
+    # Mock git to intercept push/pull (pass through other commands)
     cat > "$TEST_TEMP_DIR/bin/git" << 'EOF'
 #!/bin/bash
 if [ "$1" = "push" ]; then
     echo "Everything up-to-date"
+    exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
     exit 0
 fi
 /usr/bin/git "$@"
@@ -147,8 +150,15 @@ cat
 EOF
     chmod +x "$TEST_TEMP_DIR/bin/jq"
     
-    # Use a PATH that doesn't include git
-    run bash -c "PATH='$TEST_TEMP_DIR/bin:/usr/bin' $SCRIPT_PATH 2>&1"
+    # Create clear mock so the script doesn't fail on 'clear' before check_command
+    cat > "$TEST_TEMP_DIR/bin/clear" << 'EOF'
+#!/bin/bash
+exit 0
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/clear"
+
+    # Use a PATH that excludes /usr/bin so git (/usr/bin/git) is not found
+    run bash -c "PATH='$TEST_TEMP_DIR/bin' $SCRIPT_PATH 2>&1"
     
     [[ "$output" =~ "git is not installed" ]] || [[ "$output" =~ "git" ]]
 }
@@ -308,6 +318,9 @@ EOF
 if [ "$1" = "push" ]; then
     echo "pushed"
     exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
+    exit 0
 fi
 # Pass through to real git for other commands
 /usr/bin/git "$@"
@@ -328,6 +341,9 @@ EOF
 #!/bin/bash
 if [ "$1" = "push" ]; then
     echo "pushed"
+    exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
     exit 0
 fi
 /usr/bin/git "$@"
@@ -457,6 +473,9 @@ EOF
 #!/bin/bash
 if [ "$1" = "push" ]; then
     exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
+    exit 0
 fi
 /usr/bin/git "$@"
 EOF
@@ -490,6 +509,9 @@ EOF
 #!/bin/bash
 if [ "$1" = "push" ]; then
     exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
+    exit 0
 fi
 /usr/bin/git "$@"
 EOF
@@ -508,6 +530,9 @@ EOF
     cat > "$TEST_TEMP_DIR/bin/git" << 'EOF'
 #!/bin/bash
 if [ "$1" = "push" ]; then
+    exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
     exit 0
 fi
 /usr/bin/git "$@"
@@ -563,6 +588,9 @@ EOF
 #!/bin/bash
 if [ "$1" = "push" ]; then
     exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
+    exit 0
 fi
 /usr/bin/git "$@"
 EOF
@@ -583,6 +611,9 @@ EOF
 #!/bin/bash
 if [ "$1" = "push" ]; then
     exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
+    exit 0
 fi
 /usr/bin/git "$@"
 EOF
@@ -593,6 +624,110 @@ EOF
     
     # Should continue without error
     [ "$status" -eq 0 ] || [[ "$output" =~ "Skipping issue link" ]] || [[ "$output" =~ "No open issues" ]]
+}
+
+#=============================================================================
+# Test Case 8: Auto-Sync Dev with Main (F1)
+#=============================================================================
+
+@test "sync: shows already-up-to-date message when dev is current with main" {
+    setup_valid_environment
+
+    run bash -c "echo -e 'Test commit\nn' | $SCRIPT_PATH"
+
+    [[ "$output" =~ "Syncing" ]]
+    [[ "$output" =~ "already up to date" ]]
+}
+
+@test "sync: stashes uncommitted changes before pulling" {
+    setup_valid_environment
+
+    run bash -c "echo -e 'Test commit\nn' | $SCRIPT_PATH"
+
+    [[ "$output" =~ "Stashing uncommitted changes" ]]
+    [[ "$output" =~ "Changes stashed" ]]
+}
+
+@test "sync: restores stashed changes after pull" {
+    setup_valid_environment
+
+    run bash -c "echo -e 'Test commit\nn' | $SCRIPT_PATH"
+
+    [[ "$output" =~ "Restoring stashed changes" ]]
+    [[ "$output" =~ "Stashed changes restored" ]]
+}
+
+@test "sync: halts with error when stash pop produces conflicts" {
+    echo "change" >> "$TEST_TEMP_DIR/repo/README.md"
+
+    cat > "$TEST_TEMP_DIR/bin/gh" << 'EOF'
+#!/bin/bash
+[ "$1" = "auth" ] && [ "$2" = "status" ] && exit 0
+exit 0
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
+
+    cat > "$TEST_TEMP_DIR/bin/jq" << 'EOF'
+#!/bin/bash
+cat
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/jq"
+
+    cat > "$TEST_TEMP_DIR/bin/git" << 'EOF'
+#!/bin/bash
+if [ "$1" = "stash" ] && [ "$2" = "pop" ]; then
+    echo "CONFLICT (content): Merge conflict in README.md"
+    exit 1
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
+    exit 0
+elif [ "$1" = "push" ]; then
+    exit 0
+fi
+/usr/bin/git "$@"
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/git"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+
+    run bash -c "echo 'test' | $SCRIPT_PATH"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Stash pop" ]] || [[ "$output" =~ "conflict" ]]
+}
+
+@test "sync: skips stash when no uncommitted changes exist" {
+    # No call to setup_valid_environment - repo has no uncommitted changes
+    cat > "$TEST_TEMP_DIR/bin/gh" << 'EOF'
+#!/bin/bash
+[ "$1" = "auth" ] && [ "$2" = "status" ] && exit 0
+exit 0
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
+
+    cat > "$TEST_TEMP_DIR/bin/jq" << 'EOF'
+#!/bin/bash
+cat
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/jq"
+
+    cat > "$TEST_TEMP_DIR/bin/git" << 'EOF'
+#!/bin/bash
+if [ "$1" = "pull" ]; then
+    echo "Already up to date."
+    exit 0
+elif [ "$1" = "push" ]; then
+    exit 0
+fi
+/usr/bin/git "$@"
+EOF
+    chmod +x "$TEST_TEMP_DIR/bin/git"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+
+    run bash -c "echo 'test' | $SCRIPT_PATH"
+
+    # Sync ran but no stash (no uncommitted changes)
+    [[ ! "$output" =~ "Stashing" ]]
+    [[ "$output" =~ "Pulling" ]] || [[ "$output" =~ "up to date" ]]
 }
 
 @test "git-shipyard shows issue in summary when linked" {
@@ -637,6 +772,9 @@ EOF
     cat > "$TEST_TEMP_DIR/bin/git" << 'EOF'
 #!/bin/bash
 if [ "$1" = "push" ]; then
+    exit 0
+elif [ "$1" = "pull" ]; then
+    echo "Already up to date."
     exit 0
 fi
 /usr/bin/git "$@"

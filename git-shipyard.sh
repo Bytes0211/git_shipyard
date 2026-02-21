@@ -135,6 +135,61 @@ check_not_on_base_branch() {
     fi
 }
 
+# F1: Auto-sync HEAD_BRANCH with BASE_BRANCH before workflow begins
+sync_dev_with_main() {
+    echo -e "${BLUE}Syncing ${HEAD_BRANCH} with ${BASE_BRANCH}...${NC}"
+
+    local stashed=false
+
+    # Stash uncommitted changes if present
+    if has_uncommitted_changes; then
+        echo -e "${BLUE}  Stashing uncommitted changes...${NC}"
+        if ! git stash push -m "git-shipyard: auto-stash before sync" --include-untracked; then
+            error_exit "Failed to stash changes before sync."
+        fi
+        echo -e "  ${GREEN}✓${NC} Changes stashed"
+        stashed=true
+    fi
+
+    # Pull latest BASE_BRANCH into HEAD_BRANCH
+    echo -e "${BLUE}  Pulling latest ${BASE_BRANCH}...${NC}"
+    local pull_output
+    pull_output=$(git pull origin "${BASE_BRANCH}" 2>&1)
+    local pull_exit=$?
+
+    if [ $pull_exit -ne 0 ]; then
+        if [ "$stashed" = true ]; then
+            echo -e "  ${YELLOW}ℹ${NC} Your stash is intact. Run: git stash pop"
+        fi
+        error_exit "Failed to pull ${BASE_BRANCH}. Check your connection and try again."
+    fi
+
+    if echo "$pull_output" | grep -qi "already up to date"; then
+        echo -e "  ${GREEN}✓${NC} ${HEAD_BRANCH} is already up to date with ${BASE_BRANCH}"
+    else
+        echo -e "  ${GREEN}✓${NC} Pulled latest ${BASE_BRANCH} into ${HEAD_BRANCH}"
+    fi
+
+    # Restore stashed changes
+    if [ "$stashed" = true ]; then
+        echo -e "${BLUE}  Restoring stashed changes...${NC}"
+        local stash_pop_output
+        stash_pop_output=$(git stash pop 2>&1)
+        local stash_pop_exit=$?
+
+        if [ $stash_pop_exit -ne 0 ]; then
+            echo -e "  ${RED}✗${NC} Stash pop produced conflicts"
+            echo -e "  ${YELLOW}ℹ${NC} Your stash is still intact. Resolve conflicts manually:"
+            echo -e "  ${YELLOW}ℹ${NC}   git stash show -p    # view stash contents"
+            echo -e "  ${YELLOW}ℹ${NC}   git stash pop        # retry after resolving"
+            error_exit "Stash pop conflicts detected. Resolve manually and re-run."
+        fi
+        echo -e "  ${GREEN}✓${NC} Stashed changes restored"
+    fi
+
+    echo ""
+}
+
 # Get preferred editor
 get_editor() {
     local editor
@@ -406,7 +461,10 @@ main() {
     
     check_remote
     echo -e "  ${GREEN}✓${NC} Remote 'origin' configured"
-    
+
+    # F1: Auto-sync dev with main before mode detection
+    sync_dev_with_main
+
     # Determine workflow mode
     local mode=""
     if has_uncommitted_changes; then
