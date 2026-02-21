@@ -367,6 +367,100 @@ select_issue() {
     return 0
 }
 
+# Create a GitHub issue after the sync step
+# Sets global CREATED_ISSUE_NUMBER and CREATED_ISSUE_TITLE variables
+CREATED_ISSUE_NUMBER=""
+CREATED_ISSUE_TITLE=""
+create_github_issue() {
+    CREATED_ISSUE_NUMBER=""
+    CREATED_ISSUE_TITLE=""
+
+    # Skip in non-interactive mode
+    if [ ! -t 0 ]; then
+        return 0
+    fi
+
+    echo ""
+    local create_issue
+    read -r -p "Create a GitHub Issue? (y/N): " create_issue
+    if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
+        return 0
+    fi
+
+    # Prompt for issue title (single-line)
+    echo ""
+    echo -e "${YELLOW}Enter issue title:${NC}"
+    local issue_title
+    read -r -p "> " issue_title
+
+    if [ -z "$issue_title" ]; then
+        echo -e "  ${YELLOW}ℹ${NC} Skipping issue creation (empty title)"
+        return 0
+    fi
+
+    # Prompt for issue body (single-line or editor, same pattern as get_commit_message)
+    echo ""
+    echo -e "${YELLOW}Enter issue body:${NC}"
+    echo -e "  ${CYAN}1)${NC} Single line (type here)"
+    echo -e "  ${CYAN}2)${NC} Multi-line (open editor)"
+    echo ""
+
+    local issue_body=""
+    local choice
+    while true; do
+        read -r -p "Choose (1/2): " choice
+        case $choice in
+            1)
+                echo ""
+                read -r -p "> " issue_body
+                break
+                ;;
+            2)
+                local editor
+                editor=$(get_editor)
+                local tmpfile
+                tmpfile=$(mktemp)
+
+                # Pre-populate editor with issue template if available
+                local template_file="$HOME/.config/issue-template.md"
+                if [ -f "$template_file" ]; then
+                    cat "$template_file" > "$tmpfile"
+                else
+                    echo -e "  ${YELLOW}⚠${NC}  Warning: No issue template found at ~/.config/issue-template.md. Using blank template."
+                    echo "" > "$tmpfile"
+                fi
+
+                echo -e "Opening editor (${editor})..."
+                $editor "$tmpfile"
+
+                # Read and clean body (remove comments and trailing whitespace)
+                issue_body=$(grep -v '^#' "$tmpfile" | sed -e 's/[[:space:]]*$//' | sed '/^$/N;/^\n$/d')
+                rm -f "$tmpfile"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice. Enter 1 or 2.${NC}"
+                ;;
+        esac
+    done
+
+    # Create the issue
+    echo ""
+    echo -e "${BLUE}Creating GitHub issue...${NC}"
+    local issue_output
+    if ! issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" 2>&1); then
+        echo -e "  ${RED}✗${NC} Failed to create issue"
+        echo "$issue_output" >&2
+        return 1
+    fi
+
+    # Extract issue number from the returned URL (e.g. https://github.com/owner/repo/issues/42)
+    CREATED_ISSUE_NUMBER=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+    CREATED_ISSUE_TITLE="$issue_title"
+    echo -e "  ${GREEN}✓${NC} Issue #${CREATED_ISSUE_NUMBER} created: ${CREATED_ISSUE_TITLE}"
+    return 0
+}
+
 # Main script
 main() {
     # Trap for unexpected errors (inside main for source guard compatibility)
@@ -574,8 +668,12 @@ Closes #${SELECTED_ISSUE}"
     
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
     echo ""
-    
+
+    # Offer to create a new GitHub issue
+    create_github_issue || true
+
     # Success message
+    echo ""
     echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║     ✓ All actions completed!           ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
@@ -588,6 +686,9 @@ Closes #${SELECTED_ISSUE}"
     echo -e "  • Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
     if [ -n "$SELECTED_ISSUE" ]; then
         echo -e "  • Linked to issue #${SELECTED_ISSUE} (closes on merge)"
+    fi
+    if [ -n "$CREATED_ISSUE_NUMBER" ]; then
+        echo -e "  • Created issue #${CREATED_ISSUE_NUMBER}: ${CREATED_ISSUE_TITLE}"
     fi
     echo ""
     echo -e "${YELLOW}Goodbye!${NC}"
