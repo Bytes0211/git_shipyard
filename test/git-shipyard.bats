@@ -988,3 +988,289 @@ EOF
     run grep "create_github_issue || true" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
+
+# =============================================================================
+# Test 14: pr_management_mode() function
+# =============================================================================
+
+@test "pr_management_mode function exists in script" {
+    run grep "pr_management_mode()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "pr_management_mode is dispatched from main" {
+    run grep 'pr_management_mode' "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    # Should be called in the mode dispatch guard
+    [[ "$output" == *'pr_management_mode'* ]]
+}
+
+@test "mode detection sets pr_management when no changes and no commits ahead" {
+    cat > "$TEST_DIR/test_pr_mgmt_mode.sh" << 'EOF'
+#!/usr/bin/env bash
+BASE_BRANCH="main"
+
+has_uncommitted_changes() { return 1; }  # false
+has_commits_ahead() { return 1; }        # false
+
+if has_uncommitted_changes; then
+    mode="full"
+elif has_commits_ahead; then
+    mode="pr_only"
+else
+    mode="pr_management"
+fi
+
+echo "MODE=$mode"
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_mode.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_mode.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MODE=pr_management"* ]]
+}
+
+@test "pr_management_mode exits cleanly when no open PRs" {
+    cat > "$TEST_DIR/test_pr_mgmt_no_prs.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Mock gh to return empty PR list
+gh() { echo "[]"; return 0; }
+
+pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
+
+if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
+    echo -e "  ${YELLOW}ℹ${NC} No open pull requests found"
+    echo "NO_PRS_EXIT"
+    exit 0
+fi
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_no_prs.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_no_prs.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No open pull requests found"* ]]
+    [[ "$output" == *"NO_PRS_EXIT"* ]]
+}
+
+@test "pr_management_mode cancels on x input" {
+    cat > "$TEST_DIR/test_pr_mgmt_cancel.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+selection="x"
+if [ "$selection" = "x" ] || [ "$selection" = "X" ]; then
+    echo -e "${YELLOW}Operation cancelled.${NC}"
+    echo "CANCELLED"
+    exit 0
+fi
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_cancel.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_cancel.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Operation cancelled."* ]]
+    [[ "$output" == *"CANCELLED"* ]]
+}
+
+@test "pr_management_mode cancels on X input" {
+    cat > "$TEST_DIR/test_pr_mgmt_cancel_upper.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+selection="X"
+if [ "$selection" = "x" ] || [ "$selection" = "X" ]; then
+    echo -e "${YELLOW}Operation cancelled.${NC}"
+    echo "CANCELLED"
+    exit 0
+fi
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_cancel_upper.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_cancel_upper.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CANCELLED"* ]]
+}
+
+@test "pr_management_mode validates selection range" {
+    cat > "$TEST_DIR/test_pr_mgmt_validation.sh" << 'EOF'
+#!/usr/bin/env bash
+RED='\033[0;31m'
+NC='\033[0m'
+pr_count=3
+
+validate() {
+    local selection="$1"
+    if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "$pr_count" ]; then
+        echo "VALID=$selection"
+    else
+        echo "INVALID=$selection"
+    fi
+}
+
+validate 0
+validate 1
+validate 3
+validate 4
+validate "abc"
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_validation.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_validation.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"INVALID=0"* ]]
+    [[ "$output" == *"VALID=1"* ]]
+    [[ "$output" == *"VALID=3"* ]]
+    [[ "$output" == *"INVALID=4"* ]]
+    [[ "$output" == *"INVALID=abc"* ]]
+}
+
+@test "pr_management_mode shows confirmation with 4 actions" {
+    run bash -c "grep -A4 'Squash-merge PR' '$SCRIPT_DIR/git-shipyard.sh' | grep -c -E 'Squash-merge|Delete remote|Switch to|Delete local'"
+    [ "$status" -eq 0 ]
+    [ "$output" -eq 4 ]
+}
+
+@test "pr_management_mode uses --squash --delete-branch for merge" {
+    run grep "gh pr merge.*--squash --delete-branch" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "pr_management_mode detects merge conflicts" {
+    cat > "$TEST_DIR/test_pr_mgmt_conflict.sh" << 'EOF'
+#!/usr/bin/env bash
+RED='\033[0;31m'
+NC='\033[0m'
+
+merge_output="CONFLICT (content): Merge conflict in file.txt"
+if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+    echo -e "  ${RED}✗${NC} Merge conflict detected — resolve manually and retry"
+    echo "CONFLICT_DETECTED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_conflict.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_conflict.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Merge conflict detected"* ]]
+    [[ "$output" == *"CONFLICT_DETECTED"* ]]
+}
+
+@test "pr_management_mode handles generic merge failure" {
+    cat > "$TEST_DIR/test_pr_mgmt_merge_fail.sh" << 'EOF'
+#!/usr/bin/env bash
+RED='\033[0;31m'
+NC='\033[0m'
+
+merge_output="GraphQL: Could not merge pull request (mergeStateStatus: BLOCKED)"
+if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+    echo "CONFLICT_PATH"
+else
+    echo -e "  ${RED}✗${NC} Merge failed"
+    echo "GENERIC_FAILURE"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_merge_fail.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_merge_fail.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Merge failed"* ]]
+    [[ "$output" == *"GENERIC_FAILURE"* ]]
+}
+
+@test "pr_management_mode successful merge shows summary with branch cleaned up" {
+    cat > "$TEST_DIR/test_pr_mgmt_summary.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+BASE_BRANCH="main"
+selected_pr="7"
+selected_title="Add login feature"
+pr_head_branch="feature-login"
+branch_deleted=true
+
+echo -e "${CYAN}Summary:${NC}"
+echo -e "  • PR #${selected_pr} squash-merged: ${selected_title}"
+echo -e "  • Remote branch deleted"
+if [ "$branch_deleted" = true ]; then
+    echo -e "  • Local branch '${pr_head_branch}' cleaned up"
+fi
+echo -e "  • ${BASE_BRANCH} updated with latest changes"
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_summary.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_summary.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR #7 squash-merged: Add login feature"* ]]
+    [[ "$output" == *"Remote branch deleted"* ]]
+    [[ "$output" == *"Local branch 'feature-login' cleaned up"* ]]
+    [[ "$output" == *"main updated with latest changes"* ]]
+}
+
+@test "pr_management_mode summary omits branch line when deletion failed" {
+    cat > "$TEST_DIR/test_pr_mgmt_summary_no_branch.sh" << 'EOF'
+#!/usr/bin/env bash
+CYAN='\033[0;36m'
+NC='\033[0m'
+BASE_BRANCH="main"
+selected_pr="7"
+selected_title="Add login feature"
+pr_head_branch="feature-login"
+branch_deleted=false
+
+echo -e "${CYAN}Summary:${NC}"
+echo -e "  • PR #${selected_pr} squash-merged: ${selected_title}"
+echo -e "  • Remote branch deleted"
+if [ "$branch_deleted" = true ]; then
+    echo -e "  • Local branch '${pr_head_branch}' cleaned up"
+fi
+echo -e "  • ${BASE_BRANCH} updated with latest changes"
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_summary_no_branch.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_summary_no_branch.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR #7 squash-merged"* ]]
+    [[ "$output" != *"cleaned up"* ]]
+}
+
+@test "pr_management_mode skips base branch check" {
+    # The check_not_on_base_branch guard should only apply to full/pr_only modes
+    run grep -B2 'check_not_on_base_branch' "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    # Verify the check is gated behind a mode != pr_management condition
+    [[ "$output" == *"pr_management"* ]]
+}
+
+@test "pr_management_mode uses safe branch delete with -D hint" {
+    run grep "git branch -d" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    run grep "git branch -D" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "pr_management_mode resolves head branch before merge" {
+    run grep "gh pr view.*headRefName" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "pr_management_mode checks branch exists before deleting" {
+    run grep "git show-ref --verify --quiet" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "pr_management_mode uses branch_deleted flag for summary" {
+    # Verify the script uses a flag to track deletion success
+    run grep "branch_deleted=true" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    run grep "branch_deleted=false" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    run grep 'branch_deleted.*=.*true' "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}

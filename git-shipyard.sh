@@ -461,6 +461,141 @@ create_github_issue() {
     return 0
 }
 
+# PR Management Mode: list open PRs and let user squash-merge one
+pr_management_mode() {
+    echo ""
+    echo -e "${BLUE}Fetching open pull requests...${NC}"
+
+    local pr_list
+    pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
+
+    if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
+        echo -e "  ${YELLOW}ℹ${NC} No open pull requests found"
+        echo ""
+        echo -e "${YELLOW}Goodbye!${NC}"
+        exit 0
+    fi
+
+    # Parse PR numbers and titles into arrays
+    local pr_numbers=()
+    local pr_titles=()
+    while IFS= read -r line; do
+        pr_numbers+=("$line")
+    done < <(echo "$pr_list" | jq -r '.[].number')
+
+    while IFS= read -r line; do
+        pr_titles+=("$line")
+    done < <(echo "$pr_list" | jq -r '.[].title')
+
+    local pr_count=${#pr_numbers[@]}
+
+    echo ""
+    echo -e "${YELLOW}Select a pull request to squash-merge:${NC}"
+    echo ""
+
+    for i in "${!pr_numbers[@]}"; do
+        printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}"
+    done
+    echo ""
+    printf "  ${CYAN}%2s)${NC} Exit\n" "x"
+    echo ""
+
+    local selection
+    while true; do
+        read -r -p "Select PR [1-${pr_count}/x]: " selection
+
+        if [ "$selection" = "x" ] || [ "$selection" = "X" ]; then
+            echo -e "${YELLOW}Operation cancelled.${NC}"
+            echo -e "${YELLOW}Goodbye!${NC}"
+            exit 0
+        fi
+
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "$pr_count" ]; then
+            break
+        fi
+        echo -e "${RED}Invalid selection. Enter a number between 1 and ${pr_count}, or 'x' to exit.${NC}"
+    done
+
+    local selected_pr=${pr_numbers[$((selection - 1))]}
+    local selected_title=${pr_titles[$((selection - 1))]}
+
+    echo ""
+    echo -e "${BLUE}The following actions will be performed:${NC}"
+    echo -e "  1. Squash-merge PR #${selected_pr}: ${selected_title}"
+    echo -e "  2. Delete remote branch (--delete-branch)"
+    echo -e "  3. Switch to ${BASE_BRANCH} and pull latest"
+    echo -e "  4. Delete local head branch"
+    echo ""
+
+    read -r -p "Proceed? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Operation cancelled.${NC}"
+        echo -e "${YELLOW}Goodbye!${NC}"
+        exit 0
+    fi
+
+    echo ""
+
+    # Resolve the PR's head branch name before merging (for local cleanup)
+    local pr_head_branch
+    pr_head_branch=$(gh pr view "$selected_pr" --json headRefName -q '.headRefName' 2>/dev/null)
+
+    # Squash-merge the PR (also deletes the remote branch)
+    echo -e "${BLUE}Squash-merging PR #${selected_pr}...${NC}"
+    local merge_output
+    if ! merge_output=$(gh pr merge "$selected_pr" --squash --delete-branch 2>&1); then
+        if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+            echo -e "  ${RED}✗${NC} Merge conflict detected — resolve manually and retry"
+        else
+            echo -e "  ${RED}✗${NC} Merge failed"
+            echo "$merge_output" >&2
+        fi
+        error_exit "Failed to merge PR #${selected_pr}."
+    fi
+    echo -e "  ${GREEN}✓${NC} PR #${selected_pr} squash-merged and remote branch deleted"
+
+    # Switch to base branch and pull latest
+    echo -e "${BLUE}Switching to ${BASE_BRANCH} and pulling...${NC}"
+    if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
+        echo -e "  ${YELLOW}⚠${NC}  Could not switch to ${BASE_BRANCH} automatically"
+    else
+        if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
+            echo -e "  ${YELLOW}⚠${NC}  Could not pull latest ${BASE_BRANCH}"
+        else
+            echo -e "  ${GREEN}✓${NC} Switched to ${BASE_BRANCH} and pulled latest"
+        fi
+    fi
+
+    # Delete local head branch if it still exists
+    local branch_deleted=false
+    if [ -n "$pr_head_branch" ] && git show-ref --verify --quiet "refs/heads/$pr_head_branch"; then
+        echo -e "${BLUE}Deleting local branch '${pr_head_branch}'...${NC}"
+        if ! git branch -d "$pr_head_branch" 2>/dev/null; then
+            echo -e "  ${YELLOW}⚠${NC}  Could not delete local branch '${pr_head_branch}'"
+            echo -e "  ${YELLOW}ℹ${NC} To force delete: git branch -D ${pr_head_branch}"
+        else
+            echo -e "  ${GREEN}✓${NC} Local branch '${pr_head_branch}' deleted"
+            branch_deleted=true
+        fi
+    fi
+
+    # Success message
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║     ✓ All actions completed!           ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}Summary:${NC}"
+    echo -e "  • PR #${selected_pr} squash-merged: ${selected_title}"
+    echo -e "  • Remote branch deleted"
+    if [ "$branch_deleted" = true ]; then
+        echo -e "  • Local branch '${pr_head_branch}' cleaned up"
+    fi
+    echo -e "  • ${BASE_BRANCH} updated with latest changes"
+    echo ""
+    echo -e "${YELLOW}Goodbye!${NC}"
+}
+
 # Main script
 main() {
     # Trap for unexpected errors (inside main for source guard compatibility)
@@ -492,9 +627,6 @@ main() {
     check_not_detached
     echo -e "  ${GREEN}✓${NC} On a valid branch"
     
-    check_not_on_base_branch
-    echo -e "  ${GREEN}✓${NC} Not on base branch"
-    
     check_gh_auth
     echo -e "  ${GREEN}✓${NC} GitHub authenticated"
     
@@ -510,10 +642,22 @@ main() {
         mode="pr_only"
         echo -e "  ${GREEN}✓${NC} Commits ahead of ${BASE_BRANCH} (already committed)"
     else
-        error_exit "No changes to commit and no commits ahead of main."
+        mode="pr_management"
+        echo -e "  ${GREEN}✓${NC} Clean working tree — entering PR Management Mode"
     fi
-    
+
+    # Only enforce non-base-branch for modes that operate on the current branch
+    if [ "$mode" != "pr_management" ]; then
+        check_not_on_base_branch
+        echo -e "  ${GREEN}✓${NC} Not on base branch"
+    fi
+
     echo ""
+
+    if [ "$mode" = "pr_management" ]; then
+        pr_management_mode
+        return
+    fi
     
     if [ "$mode" = "full" ]; then
         # Prompt for commit message
