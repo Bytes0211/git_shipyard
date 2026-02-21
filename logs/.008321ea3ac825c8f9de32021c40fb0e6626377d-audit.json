@@ -9,6 +9,11 @@
             "date": 1771127354165,
             "name": "/home/scotton/dev/projects/git_shipyard/logs/mcp-puppeteer-2026-02-14.log",
             "hash": "7d3e20d95ce9b624fbb7e2a64c50b320e2407e04180ca01b7986009373756474"
+        },
+        {
+            "date": 1771715477621,
+            "name": "/home/scotton/dev/projects/git_shipyard/logs/mcp-puppeteer-2026-02-21.log",
+            "hash": "7f52a2b29980a922ebd49d926f75387399ab6891a54fe2e0d368842accc0b025"
         }
     ],
     "hashType": "sha256"

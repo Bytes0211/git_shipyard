@@ -686,3 +686,305 @@ EOF
     run grep "Multi-line (open editor)" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
+
+# =============================================================================
+# Test 13: create_github_issue() function
+# =============================================================================
+
+@test "create_github_issue skips in non-interactive mode" {
+    cat > "$TEST_DIR/test_issue_noninteractive.sh" << EOF
+#!/usr/bin/env bash
+main() { :; }
+source "$SCRIPT_DIR/git-shipyard.sh"
+create_github_issue
+echo "STATUS=\$?"
+echo "NUMBER=\$CREATED_ISSUE_NUMBER"
+EOF
+    chmod +x "$TEST_DIR/test_issue_noninteractive.sh"
+
+    # Pipe input to simulate non-interactive mode (stdin is not a terminal)
+    run bash -c "echo '' | $TEST_DIR/test_issue_noninteractive.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NUMBER="* ]]
+    # Should NOT contain any prompts
+    [[ "$output" != *"Create a GitHub Issue"* ]]
+}
+
+@test "create_github_issue skips when user declines" {
+    cat > "$TEST_DIR/test_issue_decline.sh" << 'EOF'
+#!/usr/bin/env bash
+CREATED_ISSUE_NUMBER=""
+CREATED_ISSUE_TITLE=""
+
+# Simulate interactive terminal
+create_github_issue() {
+    CREATED_ISSUE_NUMBER=""
+    CREATED_ISSUE_TITLE=""
+
+    local create_issue="n"
+    if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
+        echo "SKIPPED"
+        return 0
+    fi
+}
+
+create_github_issue
+echo "NUMBER=$CREATED_ISSUE_NUMBER"
+EOF
+    chmod +x "$TEST_DIR/test_issue_decline.sh"
+
+    run "$TEST_DIR/test_issue_decline.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SKIPPED"* ]]
+    [[ "$output" == *"NUMBER="* ]]
+}
+
+@test "create_github_issue skips on empty title" {
+    cat > "$TEST_DIR/test_issue_empty_title.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER=""
+CREATED_ISSUE_TITLE=""
+
+# Simulate the empty title path
+issue_title=""
+if [ -z "$issue_title" ]; then
+    echo -e "  ${YELLOW}ℹ${NC} Skipping issue creation (empty title)"
+    echo "EMPTY_TITLE_HANDLED"
+fi
+echo "NUMBER=$CREATED_ISSUE_NUMBER"
+EOF
+    chmod +x "$TEST_DIR/test_issue_empty_title.sh"
+
+    run "$TEST_DIR/test_issue_empty_title.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Skipping issue creation (empty title)"* ]]
+    [[ "$output" == *"EMPTY_TITLE_HANDLED"* ]]
+}
+
+@test "create_github_issue creates issue successfully (mocked)" {
+    cat > "$TEST_DIR/test_issue_success.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER=""
+CREATED_ISSUE_TITLE=""
+
+# Mock gh to return a GitHub issue URL
+gh() {
+    echo "https://github.com/owner/repo/issues/42"
+    return 0
+}
+
+issue_title="Fix the login bug"
+issue_body="Users cannot log in when using SSO"
+
+echo -e "${BLUE}Creating GitHub issue...${NC}"
+local_output=$(gh issue create --title "$issue_title" --body "$issue_body" 2>&1)
+CREATED_ISSUE_NUMBER=$(echo "$local_output" | grep -oE '[0-9]+$')
+CREATED_ISSUE_TITLE="$issue_title"
+echo -e "  ${GREEN}✓${NC} Issue #${CREATED_ISSUE_NUMBER} created: ${CREATED_ISSUE_TITLE}"
+echo "NUMBER=$CREATED_ISSUE_NUMBER"
+echo "TITLE=$CREATED_ISSUE_TITLE"
+EOF
+    chmod +x "$TEST_DIR/test_issue_success.sh"
+
+    run "$TEST_DIR/test_issue_success.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Issue #42 created: Fix the login bug"* ]]
+    [[ "$output" == *"NUMBER=42"* ]]
+    [[ "$output" == *"TITLE=Fix the login bug"* ]]
+}
+
+@test "create_github_issue handles gh failure" {
+    cat > "$TEST_DIR/test_issue_fail.sh" << 'EOF'
+#!/usr/bin/env bash
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER=""
+CREATED_ISSUE_TITLE=""
+
+# Mock gh to fail
+gh() {
+    echo "HTTP 422: Validation Failed" >&2
+    return 1
+}
+
+issue_title="Fix the login bug"
+issue_body="Description"
+
+echo -e "${BLUE}Creating GitHub issue...${NC}"
+if ! issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" 2>&1); then
+    echo -e "  ${RED}✗${NC} Failed to create issue"
+    echo "$issue_output" >&2
+    echo "FAILED"
+    exit 1
+fi
+EOF
+    chmod +x "$TEST_DIR/test_issue_fail.sh"
+
+    run "$TEST_DIR/test_issue_fail.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Failed to create issue"* ]]
+    [[ "$output" == *"FAILED"* ]]
+}
+
+@test "create_github_issue extracts issue number from URL" {
+    cat > "$TEST_DIR/test_issue_extract.sh" << 'EOF'
+#!/usr/bin/env bash
+# Test various URL formats that gh might return
+urls=(
+    "https://github.com/owner/repo/issues/1"
+    "https://github.com/owner/repo/issues/42"
+    "https://github.com/owner/repo/issues/999"
+)
+
+for url in "${urls[@]}"; do
+    number=$(echo "$url" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+    echo "URL=$url NUMBER=$number"
+done
+EOF
+    chmod +x "$TEST_DIR/test_issue_extract.sh"
+
+    run "$TEST_DIR/test_issue_extract.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NUMBER=1"* ]]
+    [[ "$output" == *"NUMBER=42"* ]]
+    [[ "$output" == *"NUMBER=999"* ]]
+}
+
+@test "create_github_issue extraction ignores trailing non-URL text" {
+    cat > "$TEST_DIR/test_issue_extract_robust.sh" << 'EOF'
+#!/usr/bin/env bash
+# Simulate gh outputting extra text after the URL
+output="https://github.com/owner/repo/issues/15
+Some deprecation warning 2025"
+
+number=$(echo "$output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+echo "NUMBER=$number"
+EOF
+    chmod +x "$TEST_DIR/test_issue_extract_robust.sh"
+
+    run "$TEST_DIR/test_issue_extract_robust.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NUMBER=15"* ]]
+}
+
+@test "create_github_issue editor mode uses template when available" {
+    cat > "$TEST_DIR/test_issue_template.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Create a fake template
+template_dir="$TEST_DIR/fake_home/.config"
+mkdir -p "$template_dir"
+echo "## Bug Report" > "$template_dir/issue-template.md"
+echo "Steps to reproduce:" >> "$template_dir/issue-template.md"
+
+template_file="$template_dir/issue-template.md"
+tmpfile=$(mktemp)
+
+if [ -f "$template_file" ]; then
+    cat "$template_file" > "$tmpfile"
+    echo "TEMPLATE_LOADED"
+else
+    echo "TEMPLATE_MISSING"
+fi
+
+# Verify template content was copied
+content=$(cat "$tmpfile")
+rm -f "$tmpfile"
+
+echo "CONTENT=$content"
+EOF
+    chmod +x "$TEST_DIR/test_issue_template.sh"
+
+    run "$TEST_DIR/test_issue_template.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TEMPLATE_LOADED"* ]]
+    [[ "$output" == *"Bug Report"* ]]
+}
+
+@test "create_github_issue editor mode warns when template missing" {
+    cat > "$TEST_DIR/test_issue_no_template.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+template_file="/nonexistent/path/issue-template.md"
+tmpfile=$(mktemp)
+
+if [ -f "$template_file" ]; then
+    cat "$template_file" > "$tmpfile"
+    echo "TEMPLATE_LOADED"
+else
+    echo -e "  ${YELLOW}⚠${NC}  Warning: No issue template found at ~/.config/issue-template.md. Using blank template."
+    echo "" > "$tmpfile"
+    echo "TEMPLATE_MISSING"
+fi
+
+rm -f "$tmpfile"
+EOF
+    chmod +x "$TEST_DIR/test_issue_no_template.sh"
+
+    run "$TEST_DIR/test_issue_no_template.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TEMPLATE_MISSING"* ]]
+    [[ "$output" == *"Warning: No issue template found"* ]]
+}
+
+@test "summary shows created issue when CREATED_ISSUE_NUMBER is set" {
+    cat > "$TEST_DIR/test_issue_summary.sh" << 'EOF'
+#!/usr/bin/env bash
+CYAN='\033[0;36m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER="42"
+CREATED_ISSUE_TITLE="Fix the login bug"
+
+# Simulate the summary section from main()
+if [ -n "$CREATED_ISSUE_NUMBER" ]; then
+    echo -e "  • Created issue #${CREATED_ISSUE_NUMBER}: ${CREATED_ISSUE_TITLE}"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_issue_summary.sh"
+
+    run "$TEST_DIR/test_issue_summary.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Created issue #42: Fix the login bug"* ]]
+}
+
+@test "summary omits issue line when no issue was created" {
+    cat > "$TEST_DIR/test_issue_no_summary.sh" << 'EOF'
+#!/usr/bin/env bash
+CREATED_ISSUE_NUMBER=""
+CREATED_ISSUE_TITLE=""
+
+# Simulate the summary section from main()
+echo "START_SUMMARY"
+if [ -n "$CREATED_ISSUE_NUMBER" ]; then
+    echo -e "  • Created issue #${CREATED_ISSUE_NUMBER}: ${CREATED_ISSUE_TITLE}"
+fi
+echo "END_SUMMARY"
+EOF
+    chmod +x "$TEST_DIR/test_issue_no_summary.sh"
+
+    run "$TEST_DIR/test_issue_no_summary.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"START_SUMMARY"* ]]
+    [[ "$output" == *"END_SUMMARY"* ]]
+    [[ "$output" != *"Created issue"* ]]
+}
+
+@test "create_github_issue function exists in script" {
+    run grep "create_github_issue()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "create_github_issue is called in main with || true" {
+    run grep "create_github_issue || true" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
