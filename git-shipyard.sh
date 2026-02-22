@@ -1061,52 +1061,50 @@ check_prs_with_comments() {
     fi
 
     echo ""
-    echo -e "📡 ${BLUE}Checking for open PRs with comments...${NC}"
+    echo -e "📡 ${BLUE}Checking for open PRs with checks and comments...${NC}"
 
-    # Fetch open PRs with their comments
+    # Fetch open PRs with their status checks and comments
     local pr_list
-    pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+    pr_list=$(gh pr list --state open --json number,title,statusCheckRollup,comments --limit 20 2>/dev/null)
 
     if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
         echo -e "  ℹ️  No open pull requests found"
         return 1
     fi
 
-    # Filter to only PRs that have at least one comment
-    local prs_with_comments
-    prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
-
-    if [ -z "$prs_with_comments" ] || [ "$prs_with_comments" = "[]" ]; then
-        echo -e "  ℹ️  No open PRs with comments"
-        return 1
-    fi
-
-    # Parse PR numbers, titles, and comment counts into arrays
+    # Parse PR numbers and titles into arrays
     local pr_numbers=()
     local pr_titles=()
-    local pr_comment_counts=()
     while IFS= read -r line; do
         pr_numbers+=("$line")
-    done < <(echo "$prs_with_comments" | jq -r '.[].number')
+    done < <(echo "$pr_list" | jq -r '.[].number')
 
     while IFS= read -r line; do
         pr_titles+=("$line")
-    done < <(echo "$prs_with_comments" | jq -r '.[].title')
-
-    while IFS= read -r line; do
-        pr_comment_counts+=("$line")
-    done < <(echo "$prs_with_comments" | jq -r '.[].comments | length')
+    done < <(echo "$pr_list" | jq -r '.[].title')
 
     local pr_count=${#pr_numbers[@]}
 
-    echo -e "  💬 Found ${pr_count} open PR(s) with comments"
+    echo -e "  📋 Found ${pr_count} open PR(s)"
     echo ""
-    echo -e "📋 ${YELLOW}Open PRs with comments:${NC}"
+    echo -e "📋 ${YELLOW}Open PRs with checks and comments:${NC}"
     echo ""
 
-    for i in "${!pr_numbers[@]}"; do
-        printf "  ${CYAN}%2d)${NC} #%-4s %s (💬 %s)\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}" "${pr_comment_counts[$i]}"
-    done
+    # Display PRs with checks and comments using formatted output
+    local formatted_output
+    formatted_output=$(echo "$pr_list" | jq -r '
+      .[] | "#\(.number) \(.title)\n  Checks: \([.statusCheckRollup[]? | "\(.name): \(.conclusion // "IN_PROGRESS")"] | join(", "))\n  Comments (\(.comments | length)): \([.comments[]? | "\(.author.login): \(.body[0:50])"] | join(" | "))"
+    ')
+
+    local idx=0
+    while IFS= read -r line; do
+        if [[ "$line" == \#* ]]; then
+            idx=$((idx + 1))
+            printf "  ${CYAN}%2d)${NC} %s\n" "$idx" "$line"
+        else
+            printf "      %s\n" "$line"
+        fi
+    done <<< "$formatted_output"
     echo ""
     printf "  ${CYAN}%2d)${NC} Skip — continue with workflow\n" "0"
     echo ""

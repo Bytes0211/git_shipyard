@@ -32,7 +32,7 @@ shellcheck git-shipyard.sh
 The script auto-detects repository state and switches between three modes:
 
 - **Full mode** (uncommitted changes exist): stage → commit → push → sync → create PR
-- **PR-only mode** (commits ahead of base): check for open PRs with comments → push (if needed) → sync → create PR
+- **PR-only mode** (commits ahead of base): check for open PRs with checks and comments → push (if needed) → sync → create PR
 - **PR Management mode** (clean working tree, no commits ahead): select a PR → action menu
 
 Detection relies on `has_uncommitted_changes()` and `has_commits_ahead()` functions.
@@ -52,11 +52,11 @@ The action menu loops — view and linked-issues actions return to the menu; clo
 
 - **Lines 10-11**: Default branch config (`BASE_BRANCH="main"`, `HEAD_BRANCH="dev"`)
 - **Utility functions**: Color output, `error_exit()`, `spinner()`, command checking, `get_editor()`, `format_message_preview()`
-- **Pre-flight checks**: Validates git, gh CLI, jq, authentication, remote, detached HEAD, base branch guard; in PR-only mode, checks for open PRs with comments via `check_prs_with_comments()`
+- **Pre-flight checks**: Validates git, gh CLI, jq, authentication, remote, detached HEAD, base branch guard; in PR-only mode, checks for open PRs with checks and comments via `check_prs_with_comments()`
 - **Commit workflow**: `get_commit_message()` (single-line or editor), `link_to_pr()` (amend commit with PR reference)
 - **Issue linking**: `select_issue()` fetches open issues for PR linking; when none exist, offers to create one via `_create_issue_for_pr()`
 - **Sync**: `sync_with_base()` fetches and merges base into head before PR creation; `check_merge_in_progress()` intercepts unresolved merges
-- **PR comment check**: `check_prs_with_comments()` runs during pre-flight in PR-only mode; fetches open PRs with comments, lists them with comment counts, lets user view details via `view_pr_details()`, then offers to close the PR and exit, exit without closing, or continue with the workflow
+- **PR checks and comments**: `check_prs_with_comments()` runs during pre-flight in PR-only mode; fetches open PRs with status checks and comments via `gh pr list --json number,title,statusCheckRollup,comments`, displays each PR with check names/conclusions and comment previews, lets user view details via `view_pr_details()`, then offers to close the PR and exit, exit without closing, or continue with the workflow
 - **PR Management**: `pr_management_mode()` → action menu dispatching to `view_pr_details()`, `close_pr()`, `squash_merge_pr()`, `view_linked_issues()`
 - **Dev reset**: `reset_dev_environment()` pulls latest base, recreates fresh head branch (called by `squash_merge_pr()` after successful merge)
 - **Standalone issue creation**: `prompt_issue_creation()` at startup before pre-flight checks
@@ -90,7 +90,7 @@ Tests use BATS with isolated temporary git repositories per test case. Each test
 - Command validation and error handling
 - Issue creation and linking (`select_issue`, `_create_issue_for_pr`)
 - PR Management action menu validation
-- `check_prs_with_comments()`: no PRs, no comments, listing with comment counts, skip selection, view on selection, close and exit, exit without closing, continue with workflow, integration in pr_only mode, non-interactive skip, action menu options
+- `check_prs_with_comments()`: no PRs, PRs without comments still shown, listing with checks and comments, skip selection, view on selection, close and exit, exit without closing, continue with workflow, integration in pr_only mode, non-interactive skip, action menu options
 - `view_pr_details()`: metadata display, comments, review state color-coding
 - `close_pr()`: cancellation, success/failure, branch deletion, summary
 - `squash_merge_pr()`: confirmation, conflict detection, summary, `reset_dev_environment` integration

@@ -2900,7 +2900,7 @@ check_prs_with_comments() {
     fi
 
     local pr_list
-    pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+    pr_list=$(gh pr list --state open --json number,title,statusCheckRollup,comments --limit 20 2>/dev/null)
 
     if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
         echo "No open pull requests found"
@@ -2918,34 +2918,43 @@ EOF
     [[ "$output" == *"No open pull requests found"* ]]
 }
 
-@test "check_prs_with_comments returns 1 when PRs have no comments" {
+@test "check_prs_with_comments shows PRs even when they have no comments" {
     cat > "$TEST_DIR/test_prs_no_comments.sh" << 'EOF'
 #!/usr/bin/env bash
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Mock gh to return PRs with empty comments
+# Mock gh to return PRs with empty comments and no checks
 gh() {
-    echo '[{"number":10,"title":"Add feature","comments":[]},{"number":11,"title":"Fix bug","comments":[]}]'
+    echo '[{"number":10,"title":"Add feature","statusCheckRollup":[],"comments":[]},{"number":11,"title":"Fix bug","statusCheckRollup":[],"comments":[]}]'
     return 0
 }
 
-# Mock jq (use real jq)
-pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
-prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+pr_list=$(gh pr list --state open --json number,title,statusCheckRollup,comments --limit 20 2>/dev/null)
 
-if [ -z "$prs_with_comments" ] || [ "$prs_with_comments" = "[]" ]; then
-    echo "No open PRs with comments"
+if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
+    echo "No open pull requests found"
+else
+    pr_count=$(echo "$pr_list" | jq 'length')
+    echo "Found ${pr_count} open PR(s)"
+
+    formatted_output=$(echo "$pr_list" | jq -r '
+      .[] | "#\(.number) \(.title)\n  Checks: \([.statusCheckRollup[]? | "\(.name): \(.conclusion // "IN_PROGRESS")"] | join(", "))\n  Comments (\(.comments | length)): \([.comments[]? | "\(.author.login): \(.body[0:50])"] | join(" | "))"
+    ')
+    echo "$formatted_output"
 fi
 EOF
     chmod +x "$TEST_DIR/test_prs_no_comments.sh"
 
     run "$TEST_DIR/test_prs_no_comments.sh"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"No open PRs with comments"* ]]
+    [[ "$output" == *"Found 2 open PR(s)"* ]]
+    [[ "$output" == *"#10"* ]]
+    [[ "$output" == *"#11"* ]]
+    [[ "$output" == *"Comments (0)"* ]]
 }
 
-@test "check_prs_with_comments lists PRs that have comments" {
+@test "check_prs_with_comments lists PRs with checks and comments" {
     cat > "$TEST_DIR/test_list_prs_comments.sh" << 'EOF'
 #!/usr/bin/env bash
 BLUE='\033[0;34m'
@@ -2953,52 +2962,53 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Mock gh to return PRs, some with comments
+# Mock gh to return PRs with checks and comments
 gh() {
-    echo '[{"number":10,"title":"Add feature","comments":[{"author":{"login":"alice"},"body":"Looks good"}]},{"number":11,"title":"Fix bug","comments":[]},{"number":12,"title":"Update docs","comments":[{"author":{"login":"bob"},"body":"Needs work"},{"author":{"login":"carol"},"body":"Agreed"}]}]'
+    echo '[{"number":10,"title":"Add feature","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"comments":[{"author":{"login":"alice"},"body":"Looks good"}]},{"number":11,"title":"Fix bug","statusCheckRollup":[{"name":"lint","conclusion":"FAILURE"}],"comments":[]},{"number":12,"title":"Update docs","statusCheckRollup":[],"comments":[{"author":{"login":"bob"},"body":"Needs work"},{"author":{"login":"carol"},"body":"Agreed"}]}]'
     return 0
 }
 
-pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
-prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+pr_list=$(gh pr list --state open --json number,title,statusCheckRollup,comments --limit 20 2>/dev/null)
 
-# Parse PR numbers, titles, and comment counts
+# Parse PR numbers and titles
 pr_numbers=()
 pr_titles=()
-pr_comment_counts=()
 while IFS= read -r line; do
     pr_numbers+=("$line")
-done < <(echo "$prs_with_comments" | jq -r '.[].number')
+done < <(echo "$pr_list" | jq -r '.[].number')
 
 while IFS= read -r line; do
     pr_titles+=("$line")
-done < <(echo "$prs_with_comments" | jq -r '.[].title')
-
-while IFS= read -r line; do
-    pr_comment_counts+=("$line")
-done < <(echo "$prs_with_comments" | jq -r '.[].comments | length')
+done < <(echo "$pr_list" | jq -r '.[].title')
 
 pr_count=${#pr_numbers[@]}
 
-echo "Found ${pr_count} open PR(s) with comments"
-for i in "${!pr_numbers[@]}"; do
-    printf "%d) #%-4s %s (%s comments)\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}" "${pr_comment_counts[$i]}"
-done
+echo "Found ${pr_count} open PR(s)"
+
+# Display using the formatted output
+formatted_output=$(echo "$pr_list" | jq -r '
+  .[] | "#\(.number) \(.title)\n  Checks: \([.statusCheckRollup[]? | "\(.name): \(.conclusion // "IN_PROGRESS")"] | join(", "))\n  Comments (\(.comments | length)): \([.comments[]? | "\(.author.login): \(.body[0:50])"] | join(" | "))"
+')
+echo "$formatted_output"
 EOF
     chmod +x "$TEST_DIR/test_list_prs_comments.sh"
 
     run "$TEST_DIR/test_list_prs_comments.sh"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Found 2 open PR(s) with comments"* ]]
+    [[ "$output" == *"Found 3 open PR(s)"* ]]
     [[ "$output" == *"#10"* ]]
     [[ "$output" == *"Add feature"* ]]
-    [[ "$output" == *"1 comments"* ]]
+    [[ "$output" == *"ci: SUCCESS"* ]]
+    [[ "$output" == *"Comments (1)"* ]]
+    [[ "$output" == *"alice: Looks good"* ]]
+    [[ "$output" == *"#11"* ]]
+    [[ "$output" == *"Fix bug"* ]]
+    [[ "$output" == *"lint: FAILURE"* ]]
+    [[ "$output" == *"Comments (0)"* ]]
     [[ "$output" == *"#12"* ]]
     [[ "$output" == *"Update docs"* ]]
-    [[ "$output" == *"2 comments"* ]]
-    # PR #11 (no comments) should NOT appear
-    [[ "$output" != *"#11"* ]]
-    [[ "$output" != *"Fix bug"* ]]
+    [[ "$output" == *"Comments (2)"* ]]
+    [[ "$output" == *"bob: Needs work"* ]]
 }
 
 @test "check_prs_with_comments skip selection continues workflow" {
@@ -3011,17 +3021,16 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 gh() {
-    echo '[{"number":10,"title":"Add feature","comments":[{"author":{"login":"alice"},"body":"Looks good"}]}]'
+    echo '[{"number":10,"title":"Add feature","statusCheckRollup":[],"comments":[{"author":{"login":"alice"},"body":"Looks good"}]}]'
     return 0
 }
 
-pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
-prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+pr_list=$(gh pr list --state open --json number,title,statusCheckRollup,comments --limit 20 2>/dev/null)
 
 pr_numbers=()
 while IFS= read -r line; do
     pr_numbers+=("$line")
-done < <(echo "$prs_with_comments" | jq -r '.[].number')
+done < <(echo "$pr_list" | jq -r '.[].number')
 
 pr_count=${#pr_numbers[@]}
 
@@ -3057,22 +3066,21 @@ view_pr_details() {
 }
 
 gh() {
-    echo '[{"number":42,"title":"Dark mode","comments":[{"author":{"login":"bob"},"body":"Nice work"}]}]'
+    echo '[{"number":42,"title":"Dark mode","statusCheckRollup":[],"comments":[{"author":{"login":"bob"},"body":"Nice work"}]}]'
     return 0
 }
 
-pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
-prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+pr_list=$(gh pr list --state open --json number,title,statusCheckRollup,comments --limit 20 2>/dev/null)
 
 pr_numbers=()
 pr_titles=()
 while IFS= read -r line; do
     pr_numbers+=("$line")
-done < <(echo "$prs_with_comments" | jq -r '.[].number')
+done < <(echo "$pr_list" | jq -r '.[].number')
 
 while IFS= read -r line; do
     pr_titles+=("$line")
-done < <(echo "$prs_with_comments" | jq -r '.[].title')
+done < <(echo "$pr_list" | jq -r '.[].title')
 
 # Simulate user selecting PR 1
 selection=1
