@@ -495,6 +495,13 @@ check_merge_in_progress() {
         error_exit "Failed to complete merge commit."
     fi
     echo -e "  ${GREEN}✓${NC} Merge committed — ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+
+    # Push the merge commit so it reaches the remote before PR creation
+    echo -e "${BLUE}Pushing merge commit to origin/${HEAD_BRANCH}...${NC}"
+    if ! git push origin "${HEAD_BRANCH}" 2>/dev/null; then
+        error_exit "Failed to push merge commit to remote."
+    fi
+    echo -e "  ${GREEN}✓${NC} Merge commit pushed to remote"
     echo ""
 }
 
@@ -541,9 +548,16 @@ sync_with_base() {
     fi
 
     echo -e "  ${GREEN}✓${NC} ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+
+    # Push the merge commit to remote so the PR includes the sync changes
+    echo -e "${BLUE}Pushing merge commit to origin/${HEAD_BRANCH}...${NC}"
+    if ! git push origin "${HEAD_BRANCH}" 2>/dev/null; then
+        error_exit "Failed to push merge commit to remote."
+    fi
+    echo -e "  ${GREEN}✓${NC} Merge commit pushed to remote"
 }
 
-# PR Management Mode: list open PRs and let user squash-merge one
+# PR Management Mode:
 pr_management_mode() {
     echo ""
     echo -e "${BLUE}Fetching open pull requests...${NC}"
