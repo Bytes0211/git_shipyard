@@ -572,13 +572,16 @@ EOF
 # Test 8: Conflict handling uses git reset --merge
 # =============================================================================
 
-@test "conflict abort uses git reset --merge not git merge --abort" {
-    # Verify the script uses correct abort command for squash merge
-    run grep -c "git reset --merge" "$SCRIPT_DIR/git-shipyard.sh"
+@test "squash-merge uses gh pr merge not local git merge --squash" {
+    # Script delegates squash-merge to the GitHub API via gh pr merge
+    run grep "gh pr merge.*--squash" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
-    [ "$output" -ge 1 ]
-    
-    # Should NOT use git merge --abort for squash conflicts
+
+    # Should NOT use local git merge --squash (which would require git reset --merge on conflict)
+    run grep -c "git merge --squash" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$output" -eq 0 ]
+
+    # Should NOT use git merge --abort (not valid after git merge --squash)
     run grep -c "git merge --abort" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$output" -eq 0 ]
 }
@@ -606,8 +609,8 @@ EOF
     [ "$status" -eq 0 ]
 }
 
-@test "script deletes remote branch with --delete flag" {
-    run grep "git push origin --delete" "$SCRIPT_DIR/git-shipyard.sh"
+@test "script deletes remote branch via gh pr merge --delete-branch" {
+    run grep "gh pr merge.*--delete-branch" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
 
