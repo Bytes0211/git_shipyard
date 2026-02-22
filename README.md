@@ -1,102 +1,92 @@
-# Git Shipyard
+# 🚢 Git Shipyard
 
-**Git Shipyard** is an interactive Bash utility that streamlines your Git workflow by automating the common sequence of staging, committing, pushing, and creating GitHub pull requests—all in one command.
-
-## Screenshot
+**Ship your code in one command.** Git Shipyard is an interactive Bash utility that automates the entire Git workflow — staging, committing, pushing, and creating GitHub pull requests — in a single interactive session.
 
 ![git-shipyard screenshot](screenshot.png)
 
-## Features
+---
 
-- 🚢 **One-command workflow**: Stage, commit, push, and create PR in a single interactive session
-- 🎯 **Smart mode detection**: Automatically adapts to your repository state
-  - Full workflow when you have uncommitted changes
-  - PR-only mode when changes are already committed with open PR
-  - **Squash-merge mode** when no open PRs exist (merge directly without PR overhead)
-- 🔗 **PR linking**: Optionally link commits to existing open PRs
-- 🎫 **Issue linking**: Optionally link GitHub issues to new PRs (auto-closes on merge)
-- 🔀 **Issue-to-PR linking**: After creating a new issue, optionally append `Closes #<issue>` to an existing open PR body
-- 📝 **Multi-line commit messages**: Choose single-line input or open your preferred editor
-- ✅ **Pre-flight checks**: Validates environment before execution (git, gh CLI, jq, authentication, remote)
-- 🎨 **Beautiful CLI interface**: Color-coded output with progress indicators
-- 🛡️ **Safe by default**: Confirmation prompts before executing operations
-- 🧹 **Branch cleanup**: Option to delete feature branch after squash-merge
-- ⚙️ **Configurable branches**: Override default base and head branches via flags
+## ✨ Features
 
-## Prerequisites
+- 🚀 **One-command workflow** — Stage, commit, push, and create a PR in one go
+- 🧠 **Smart mode detection** — Automatically adapts to your repository state:
+  - 📝 **Full Mode** — uncommitted changes → stage → commit → push → PR
+  - 📤 **PR-Only Mode** — already committed → push → PR
+  - 🔀 **PR Management Mode** — clean tree → squash-merge open PRs
+- 🔗 **PR linking** — Link commits to existing open PRs (`Part of #N`)
+- 🎫 **Issue linking** — Link GitHub issues to new PRs (`Closes #N` for auto-close on merge)
+- 📋 **Issue creation** — Create GitHub issues before or after the workflow, with optional PR linking
+- 🔄 **Base branch sync** — Automatically merges latest base into head before PR creation
+- 📝 **Multi-line commit messages** — Single-line input or open your preferred editor
+- ✅ **Pre-flight checks** — Validates your entire environment before touching anything
+- 🎨 **Beautiful CLI** — Color-coded output with progress indicators and spinners
+- 🛡️ **Safe by default** — Confirmation prompts before every destructive operation
+- 🧹 **Branch cleanup** — Automatic branch deletion after squash-merge
+- ⚙️ **Configurable** — Override base/head branches and create draft PRs via flags
+- 📄 **Single file** — No build system, no framework, just one Bash script
 
-- **git**: Version control system
-- **gh**: [GitHub CLI](https://cli.github.com/) for PR creation
-- **jq**: [JSON processor](https://jqlang.github.io/jq/) for parsing GitHub API responses
-- **bash**: 4.0 or higher
-- GitHub authentication configured (`gh auth login`)
+---
 
-## Installation
+## 📋 Prerequisites
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| 🔧 **bash** 4.0+ | Shell runtime | Pre-installed on most systems |
+| 🌿 **git** | Version control | [git-scm.com](https://git-scm.com/) |
+| 🐙 **gh** | GitHub CLI for PRs & issues | [cli.github.com](https://cli.github.com/) |
+| 📦 **jq** | JSON parsing | [jqlang.github.io/jq](https://jqlang.github.io/jq/) |
+
+> 💡 Make sure you're authenticated: `gh auth login`
+
+---
+
+## 🛠️ Installation
 
 ### Quick Install
 
 ```bash
-# Clone or download the script
-curl -o git-shipyard.sh https://raw.githubusercontent.com/YOUR_USERNAME/git_shipyard/main/git-shipyard.sh
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/git_shipyard.git
 
 # Make it executable
-chmod +x git-shipyard.sh
+chmod +x git_shipyard/git-shipyard.sh
 
-# Optional: Move to PATH for global access
-sudo mv git-shipyard.sh /usr/local/bin/git-shipyard
+# Optional: Copy to PATH for global access
+sudo cp git_shipyard/git-shipyard.sh /usr/local/bin/git-shipyard
 ```
 
-### As Git Subcommand
+### 🧲 As a Git Subcommand
 
-Once `git-shipyard` is in your PATH, you can invoke it as a git subcommand:
+Once `git-shipyard` is in your `$PATH`, invoke it like a native Git command:
 
 ```bash
 git shipyard
 ```
 
-## Usage
+---
 
-### Basic Usage
+## 🚀 Usage
 
-Run the script from within any git repository:
+### Basic
+
+Run from within any Git repository:
 
 ```bash
 ./git-shipyard.sh
 ```
 
-The script will:
-1. Detect if you have uncommitted changes or unpushed commits
-2. Run pre-flight checks (git, gh, authentication, remote)
-3. Prompt for commit message (if needed)
-4. Show you what actions will be performed
-5. Ask for confirmation before proceeding
-6. Execute the workflow and create a PR
-
 ### Custom Branches
 
-By default, Git Shipyard creates PRs from `dev` to `main`. You can override these:
+Override the default `dev → main` PR direction:
 
 ```bash
-./git-shipyard.sh --base production --head feature-branch
+./git-shipyard.sh --base production --head feature-auth
 ```
 
-### Execution Modes
+### Draft PRs
 
-**Full Mode** (uncommitted changes exist):
-```
-Stage → Commit → Push → Create PR
-```
-
-**PR-only Mode** (changes already committed, open PR exists):
-```
-Push (if needed) → Create PR
-```
-
-**Squash-Merge Mode** (commits ahead, no open PRs):
-```
-Prompt: PR or Squash-merge?
-  → If Squash: Checkout base → Squash-merge → Commit → Push → Cleanup prompt
-  → If PR: Push → Create PR
+```bash
+./git-shipyard.sh --draft
 ```
 
 ### Help
@@ -105,202 +95,393 @@ Prompt: PR or Squash-merge?
 ./git-shipyard.sh --help
 ```
 
-## Examples
+### ⚙️ CLI Options
 
-### Scenario 1: You have uncommitted changes
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--base <branch>` | 🎯 Target (base) branch for the PR | `main` |
+| `--head <branch>` | 🚀 Source (head) branch for the PR | `dev` |
+| `--draft` | 📝 Create the PR as a draft | `false` |
+| `--help`, `-h` | ❓ Print usage and exit | — |
 
-```bash
+---
+
+## 🧭 How It Works
+
+### 🔍 Pre-flight Checks
+
+Before any operation, Git Shipyard validates your environment:
+
+1. ✅ `git` is installed
+2. ✅ `gh` CLI is installed
+3. ✅ `jq` is installed
+4. ✅ Inside a git repository
+5. ✅ Not in detached HEAD state
+6. ✅ Authenticated with GitHub
+7. ✅ Remote `origin` is configured
+8. ✅ No unresolved merge in progress
+
+### 🔀 Execution Modes
+
+Git Shipyard automatically detects your repository state and selects the right mode:
+
+#### 📝 Full Mode
+
+> **Triggered when:** Uncommitted changes exist (staged, unstaged, or untracked)
+
+```
+Stage All → Commit → Link to PR (opt.) → Push → Sync with Base → Link Issue (opt.) → Create PR → Create Issue (opt.)
+```
+
+#### 📤 PR-Only Mode
+
+> **Triggered when:** No uncommitted changes, but commits ahead of base
+
+```
+Push → Sync with Base → Link Issue (opt.) → Create PR → Create Issue (opt.)
+```
+
+#### 🔀 PR Management Mode
+
+> **Triggered when:** Clean working tree, no commits ahead of base
+
+```
+Reset Dev Environment → Select Open PR → Squash-Merge → Cleanup Branches
+```
+
+### 🔄 Base Branch Sync
+
+Before creating a PR, Git Shipyard automatically:
+
+1. 📥 Fetches the latest base branch from `origin`
+2. 🔀 Merges it into your head branch (if needed)
+3. 📤 Pushes the merge commit
+
+If there are **merge conflicts**, the script lists the conflicting files and exits with clear resolution instructions. On your next run, it detects the in-progress merge and resumes automatically ✨
+
+---
+
+## 📖 Examples
+
+### 🟢 Scenario 1: Full Workflow (uncommitted changes)
+
+```
 $ ./git-shipyard.sh
 
 ╔════════════════════════════════════════╗
 ║      Welcome to Git Shipyard           ║
 ╚════════════════════════════════════════╝
 
+Create a GitHub Issue? (y/N): n
+
 Running pre-flight checks...
   ✓ git found
   ✓ gh CLI found
   ✓ jq found
   ✓ Inside git repository
+  ✓ On a valid branch
   ✓ GitHub authenticated
   ✓ Remote 'origin' configured
   ✓ Uncommitted changes detected
+  ✓ Not on base branch
 
 Enter your commit message:
-> Add new feature for user authentication
+  1) Single line (type here)
+  2) Multi-line (open editor)
+
+Choose (1/2): 1
+
+> Add user authentication middleware
 
 The following actions will be performed:
   1. Stage all changes (git add .)
-  2. Commit with message: "Add new feature for user authentication"
+  2. Commit with message: "Add user authentication middleware"
   3. Push to origin/dev
-  4. Create PR from dev → main
+  4. Sync with main (merge any new changes)
+  5. Create PR from dev → main
 
 Proceed? (y/N): y
+
+Preparing to ship...
+  ✓ Ready
+
+Staging changes...
+  ✓ Changes staged
+Committing...
+  ✓ Changes committed
+Pushing to origin/dev...
+  ✓ Pushed to origin/dev
+Syncing dev with main before PR...
+  ✓ dev is up to date with main
+Creating pull request...
+─────────────────────────────────────────
+
+https://github.com/user/repo/pull/7
+
+─────────────────────────────────────────
+
+╔════════════════════════════════════════╗
+║     ✓ All actions completed!           ║
+╚════════════════════════════════════════╝
+
+Summary:
+  • Changes staged and committed
+  • Pushed to origin/dev
+  • Synced dev with main (already up to date)
+  • Pull request created (dev → main)
+
+Goodbye!
 ```
 
-### Scenario 2: Changes already committed
+### 🟡 Scenario 2: PR-Only Mode (already committed)
 
-```bash
+```
 $ ./git-shipyard.sh
 
-Running pre-flight checks...
-  ✓ git found
-  ✓ gh CLI found
-  ✓ jq found
-  ✓ Inside git repository
-  ✓ GitHub authenticated
-  ✓ Remote 'origin' configured
   ✓ Commits ahead of main (already committed)
 
 The following actions will be performed:
   1. Push to origin/dev (if needed)
-  2. Create PR from dev → main
+  2. Sync with main (merge any new changes)
+  3. Create PR from dev → main
 
 Proceed? (y/N): y
 ```
 
-### Scenario 3: Squash-merge (no open PRs)
+### 🔵 Scenario 3: PR Management (squash-merge)
 
-```bash
+```
 $ ./git-shipyard.sh
 
-Running pre-flight checks...
-  ✓ git found
-  ✓ gh CLI found
-  ✓ jq found
-  ✓ Inside git repository
-  ✓ GitHub authenticated
-  ✓ Remote 'origin' configured
-  ✓ Commits ahead of main (no open PRs)
+  ✓ Clean working tree — entering PR Management Mode
 
-No uncommitted changes detected.
-No open PRs for dev.
-Your branch is ahead of main.
+Resetting local dev environment...
+  ✓ Switched to main
+  ✓ main is up to date
+  ✓ Fresh dev created from main
 
-How would you like to proceed?
-  1. Create a Pull Request (existing workflow)
-  2. Squash-merge into main
+Fetching open pull requests...
 
-Choose (1/2): 2
+Select a pull request to squash-merge:
 
-Enter squash-merge commit message:
-  1. Single line (type here)
-  2. Multi-line (open editor)
+   1) #42   Add user authentication
+   2) #38   Fix database connection pooling
 
-Choose (1/2): 1
-> Merge feature: user authentication
+   x) Exit
 
-The following actions will be performed:
-  1. Switch to main
-  2. Squash-merge dev into main
-  3. Commit with message: "Merge feature: user authentication"
-  4. Push main to origin
+Select PR [1-2/x]: 1
 
 Proceed? (y/N): y
+
+  ✓ PR #42 squash-merged and remote branch deleted
+  ✓ Switched to main and pulled latest
+  ✓ Local branch 'dev' deleted
 ```
 
-### Scenario 4: Multi-line commit message
+### 🟣 Scenario 4: Custom branches with draft PR
 
 ```bash
-Enter your commit message:
-  1. Single line (type here)
-  2. Multi-line (open editor)
+./git-shipyard.sh --base production --head hotfix-auth --draft
 
-Choose (1/2): 2
-Opening editor (nano)...
-
-# Editor opens with template, user writes:
-# Add user authentication feature
-#
-# - Implement login/logout endpoints
-# - Add JWT token validation
-# - Create user session management
-
-The following actions will be performed:
-  1. Stage all changes (git add .)
-  2. Commit with message: "Add user authentication feature (+3 more lines)"
-  ...
+# Creates a draft PR from hotfix-auth → production
 ```
 
-### Scenario 5: Custom branches
+---
 
-```bash
-$ ./git-shipyard.sh --base production --head hotfix-auth
+## 🔗 Linking Features
 
-# Creates PR from hotfix-auth → production
+### 📌 Link Commits to Existing PRs
+
+After committing in Full Mode, you're prompted to link the commit to an existing open PR. This amends the commit message with `Part of #N`:
+
+```
+Link this commit to an existing PR?
+
+   1) #42   Add user authentication
+   2) #38   Fix database pooling
+
+   0) None (skip linking)
+
+Select PR [0-2]: 1
+  ✓ Commit linked to PR #42: Add user authentication
 ```
 
-## Configuration
+### 🎫 Link Issues to New PRs
 
-### Default Branches
+Before PR creation, you can select an open GitHub issue. The PR body will include `Closes #N` for automatic closure on merge:
 
-Edit lines 10-11 in `git-shipyard.sh` to change default branches:
+```
+Link an issue to this PR?
+
+   1) #15   Auth token expiration bug
+   2) #12   Add rate limiting
+
+   0) None (skip linking)
+
+Select issue [0-2]: 1
+  ✓ Will link issue #15: Auth token expiration bug
+```
+
+### 📋 Create Issues On-the-Fly
+
+Git Shipyard offers issue creation at two points:
+
+- 🏁 **Before the workflow** — Create a standalone issue and exit (no git operations run)
+- 🏁 **After PR creation** — Create an issue and optionally link it to an existing open PR
+
+Both flows collect a title, body (single-line or editor), and type label:
+
+`enhancement` · `bug` · `feature` · `docs` · `refactor`
+
+> 💡 **Tip:** Place a template at `~/.config/issue-template.md` to pre-populate the issue body in your editor.
+
+---
+
+## ⚙️ Configuration
+
+### 🌿 Default Branches
+
+Edit lines 10–11 in `git-shipyard.sh` to change the permanent defaults:
 
 ```bash
 BASE_BRANCH="main"    # Target branch for PRs
 HEAD_BRANCH="dev"     # Source branch for PRs
 ```
 
-### Per-Repository Configuration
+Or override per invocation with `--base` and `--head` flags.
 
-You can override defaults per invocation using flags, or consider reading from git config for permanent per-repository settings.
+### 🖊️ Editor Preference
 
-## How It Works
+For multi-line commit messages and issue bodies, Git Shipyard checks (in order):
 
-1. **Pre-flight Checks**: Validates that all required tools are installed and configured
-2. **State Detection**: Determines execution mode by checking:
-   - `git diff` for uncommitted changes
-   - `git rev-list` for commits ahead of base branch
-3. **User Interaction**: Collects commit message (if needed) and confirmation
-4. **Git Operations**: Executes git commands sequentially with error handling
-5. **PR Creation**: Uses `gh pr create --fill` to auto-populate PR details from commit messages
+1. `git config core.editor`
+2. `$VISUAL`
+3. `$EDITOR`
+4. `nano` → `vim` → `vi` (fallback chain)
 
-## Error Handling
+---
 
-- All operations are validated before execution
-- Clear error messages guide you if something goes wrong
-- Special handling for "PR already exists" scenario—opens existing PR in browser
-- Global error trap catches unexpected failures
+## 🧪 Testing
 
-## Limitations
+Tests use [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) with isolated temporary git repositories per test case.
 
-- Currently supports GitHub only (via `gh` CLI)
-- Uses `origin` remote by default
-- Stages all changes (`git add .`) rather than selective staging
-- Squash-merge does not preserve individual commit history on base branch
+```bash
+# Run all tests
+bats test/git-shipyard.bats
 
-## Troubleshooting
+# Run a specific test by name
+bats test/git-shipyard.bats --filter "test name pattern"
+```
 
-### "Not authenticated with GitHub"
+### 🔍 Linting
 
-Run GitHub CLI authentication:
+```bash
+shellcheck git-shipyard.sh
+```
+
+---
+
+## 🏗️ Project Structure
+
+```
+git_shipyard/
+├── git-shipyard.sh          # 🚢 The entire application (single file)
+├── test/
+│   ├── git-shipyard.bats    # 🧪 BATS test suite
+│   └── test_helper.bash     # 🔧 Test utilities
+├── process-flow.md           # 📊 Mermaid flowchart of all execution paths
+├── screenshot.png            # 📸 Terminal screenshot
+├── CLAUDE.md                 # 🤖 Claude Code guidance
+├── AGENTS.md                 # 🤖 Warp AI guidance
+└── README.md                 # 📖 You are here
+```
+
+### 🧬 Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| 📄 **Single-file design** | Zero build system — just copy one script and go |
+| 🛡️ **Source guard pattern** | BATS tests source functions without executing `main()` |
+| 🔍 **Auto-detection** | Repository state determines the workflow, not user flags |
+| ⚓ **GitHub-only** | Hardcoded to `gh` CLI for simplicity and reliability |
+| 🎯 **Stages everything** | Uses `git add .` — simple, predictable behavior |
+| 🌐 **`origin` remote** | Default remote; keeps the script focused |
+
+---
+
+## ⚠️ Limitations
+
+| Limitation | Details |
+|------------|---------|
+| 🐙 **GitHub only** | Relies on the `gh` CLI; no GitLab / Bitbucket support |
+| 🌐 **`origin` remote** | Hardcoded remote name; not currently configurable |
+| 📂 **Stages all changes** | `git add .` with no selective / interactive staging |
+| 🔀 **Squash-merge** | Does not preserve individual commit history on the base branch |
+
+---
+
+## 🔧 Troubleshooting
+
+### ❌ "Not authenticated with GitHub"
+
 ```bash
 gh auth login
 ```
 
-### "No 'origin' remote found"
+### ❌ "No 'origin' remote found"
 
-Add a remote repository:
 ```bash
 git remote add origin https://github.com/username/repo.git
 ```
 
-### "PR already exists for this branch"
+### ❌ "PR already exists for this branch"
 
-The script will automatically open the existing PR in your browser instead of failing.
+No action needed — Git Shipyard automatically opens the existing PR in your browser 🌐
 
-## Contributing
+### ❌ "Merge conflicts must be resolved"
 
-Contributions welcome! This is a single-file utility, so modifications are straightforward:
+1. Resolve the conflicts in the listed files
+2. Stage them: `git add <resolved-file>`
+3. Re-run `./git-shipyard.sh` — it detects the in-progress merge and resumes ✨
 
-1. Fork the repository
-2. Make your changes to `git-shipyard.sh`
-3. Test both execution modes
-4. Submit a pull request
+### ❌ "Cannot run on base branch"
 
-## License
+Switch to a feature branch first:
 
-MIT License - feel free to use and modify as needed.
+```bash
+git checkout -b my-feature
+```
 
-## Author
+---
 
-Created to streamline the repetitive Git workflow of staging, committing, pushing, and PR creation.
+## 🤝 Contributing
+
+Contributions are welcome! This is a single-file utility, so modifications are straightforward:
+
+1. 🍴 Fork the repository
+2. 🔧 Make your changes to `git-shipyard.sh`
+3. 🧪 Run the test suite: `bats test/git-shipyard.bats`
+4. 🔍 Lint with: `shellcheck git-shipyard.sh`
+5. 📤 Submit a pull request
+
+When adding new workflow steps, follow the existing pattern:
+
+```bash
+echo -e "${BLUE}Action description...${NC}"
+if ! your_command; then
+    error_exit "Failure message."
+fi
+echo -e "  ${GREEN}✓${NC} Success message"
+```
+
+---
+
+## 📄 License
+
+MIT License — feel free to use and modify as needed.
+
+---
+
+<p align="center">
+  🚢 <strong>Built to ship code faster.</strong>
+</p>
