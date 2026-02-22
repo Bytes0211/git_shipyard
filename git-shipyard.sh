@@ -458,6 +458,69 @@ create_github_issue() {
     CREATED_ISSUE_NUMBER=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
     CREATED_ISSUE_TITLE="$issue_title"
     echo -e "  ${GREEN}✓${NC} Issue #${CREATED_ISSUE_NUMBER} created: ${CREATED_ISSUE_TITLE}"
+
+    # Offer to link the new issue to an existing open PR
+    local pr_list
+    pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
+
+    if [ -n "$pr_list" ] && [ "$pr_list" != "[]" ]; then
+        local pr_numbers=()
+        local pr_titles=()
+        while IFS= read -r line; do
+            pr_numbers+=("$line")
+        done < <(echo "$pr_list" | jq -r '.[].number')
+
+        while IFS= read -r line; do
+            pr_titles+=("$line")
+        done < <(echo "$pr_list" | jq -r '.[].title')
+
+        local pr_count=${#pr_numbers[@]}
+
+        echo ""
+        echo -e "${YELLOW}Link this issue to an existing PR?${NC}"
+        echo ""
+
+        for i in "${!pr_numbers[@]}"; do
+            printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}"
+        done
+        echo ""
+        printf "  ${CYAN}%2d)${NC} None (skip linking)\n" "0"
+        echo ""
+
+        local selection
+        while true; do
+            read -r -p "Select PR [0-${pr_count}]: " selection
+
+            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$pr_count" ]; then
+                break
+            fi
+            echo -e "${RED}Invalid selection. Please enter a number between 0 and ${pr_count}.${NC}"
+        done
+
+        if [ "$selection" -eq 0 ]; then
+            echo -e "  ${YELLOW}ℹ${NC} Skipping PR link"
+        else
+            local selected_pr=${pr_numbers[$((selection - 1))]}
+            local selected_title=${pr_titles[$((selection - 1))]}
+
+            echo ""
+            echo -e "${BLUE}Linking issue #${CREATED_ISSUE_NUMBER} to PR #${selected_pr}...${NC}"
+
+            local existing_body
+            existing_body=$(gh pr view "$selected_pr" --json body --jq '.body' 2>/dev/null)
+
+            local new_body="${existing_body}
+
+Closes #${CREATED_ISSUE_NUMBER}"
+
+            if gh pr edit "$selected_pr" --body "$new_body" &>/dev/null; then
+                echo -e "  ${GREEN}✓${NC} Linked issue #${CREATED_ISSUE_NUMBER} to PR #${selected_pr}: ${selected_title}"
+            else
+                echo -e "  ${RED}✗${NC} Failed to link issue to PR #${selected_pr}"
+            fi
+        fi
+    fi
+
     return 0
 }
 

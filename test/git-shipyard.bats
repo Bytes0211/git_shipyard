@@ -992,6 +992,252 @@ EOF
     [ "$status" -eq 0 ]
 }
 
+@test "create_github_issue skips PR link when no open PRs" {
+    cat > "$TEST_DIR/test_issue_no_prs.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER=""
+CREATED_ISSUE_TITLE=""
+
+call_count=0
+gh() {
+    call_count=$((call_count + 1))
+    if [ "$1" = "issue" ] && [ "$2" = "create" ]; then
+        echo "https://github.com/owner/repo/issues/42"
+        return 0
+    fi
+    if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+        echo "[]"
+        return 0
+    fi
+}
+
+issue_title="Test issue"
+issue_body="Description"
+
+issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" 2>&1)
+CREATED_ISSUE_NUMBER=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+CREATED_ISSUE_TITLE="$issue_title"
+echo "Issue #${CREATED_ISSUE_NUMBER} created"
+
+pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
+if [ -n "$pr_list" ] && [ "$pr_list" != "[]" ]; then
+    echo "SHOULD_NOT_SEE_THIS"
+else
+    echo "NO_PRS_SKIPPED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_issue_no_prs.sh"
+
+    run "$TEST_DIR/test_issue_no_prs.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NO_PRS_SKIPPED"* ]]
+    [[ "$output" != *"SHOULD_NOT_SEE_THIS"* ]]
+    [[ "$output" != *"Link this issue"* ]]
+}
+
+@test "create_github_issue displays PR list when PRs exist" {
+    cat > "$TEST_DIR/test_issue_pr_list.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER="42"
+
+gh() {
+    if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+        echo '[{"number":10,"title":"Add auth"},{"number":15,"title":"Fix checkout"}]'
+        return 0
+    fi
+}
+
+jq() {
+    if [[ "$*" == *"number"* ]]; then
+        echo "10"
+        echo "15"
+    elif [[ "$*" == *"title"* ]]; then
+        echo "Add auth"
+        echo "Fix checkout"
+    fi
+}
+export -f jq
+
+pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
+
+if [ -n "$pr_list" ] && [ "$pr_list" != "[]" ]; then
+    local pr_numbers=()
+    local pr_titles=()
+    while IFS= read -r line; do
+        pr_numbers+=("$line")
+    done < <(echo "$pr_list" | jq -r '.[].number')
+    while IFS= read -r line; do
+        pr_titles+=("$line")
+    done < <(echo "$pr_list" | jq -r '.[].title')
+
+    echo "Link this issue to an existing PR?"
+    for i in "${!pr_numbers[@]}"; do
+        printf "  %2d) #%-4s %s\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}"
+    done
+    printf "  %2d) None (skip linking)\n" "0"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_issue_pr_list.sh"
+
+    run "$TEST_DIR/test_issue_pr_list.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Link this issue to an existing PR?"* ]]
+    [[ "$output" == *"#10"* ]]
+    [[ "$output" == *"Add auth"* ]]
+    [[ "$output" == *"#15"* ]]
+    [[ "$output" == *"Fix checkout"* ]]
+    [[ "$output" == *"None (skip linking)"* ]]
+}
+
+@test "create_github_issue skips PR link on selection 0" {
+    cat > "$TEST_DIR/test_issue_skip_link.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER="42"
+
+selection=0
+
+if [ "$selection" -eq 0 ]; then
+    echo -e "  ${YELLOW}ℹ${NC} Skipping PR link"
+    echo "SKIPPED"
+else
+    echo "LINKED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_issue_skip_link.sh"
+
+    run "$TEST_DIR/test_issue_skip_link.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Skipping PR link"* ]]
+    [[ "$output" == *"SKIPPED"* ]]
+}
+
+@test "create_github_issue links issue to selected PR successfully" {
+    cat > "$TEST_DIR/test_issue_link_success.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER="42"
+
+gh() {
+    if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+        echo "Existing PR body content"
+        return 0
+    fi
+    if [ "$1" = "pr" ] && [ "$2" = "edit" ]; then
+        # Capture the body argument
+        for arg in "$@"; do
+            if [[ "$prev" == "--body" ]]; then
+                echo "BODY_CONTENT=$arg"
+                break
+            fi
+            prev="$arg"
+        done
+        return 0
+    fi
+}
+
+selected_pr=10
+selected_title="Add auth"
+
+existing_body=$(gh pr view "$selected_pr" --json body --jq '.body' 2>/dev/null)
+new_body="${existing_body}
+
+Closes #${CREATED_ISSUE_NUMBER}"
+
+if gh pr edit "$selected_pr" --body "$new_body" &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} Linked issue #${CREATED_ISSUE_NUMBER} to PR #${selected_pr}: ${selected_title}"
+    echo "LINK_SUCCESS"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_issue_link_success.sh"
+
+    run "$TEST_DIR/test_issue_link_success.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Linked issue #42 to PR #10: Add auth"* ]]
+    [[ "$output" == *"LINK_SUCCESS"* ]]
+}
+
+@test "create_github_issue handles gh pr edit failure" {
+    cat > "$TEST_DIR/test_issue_link_fail.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+CREATED_ISSUE_NUMBER="42"
+
+gh() {
+    if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+        echo "Existing body"
+        return 0
+    fi
+    if [ "$1" = "pr" ] && [ "$2" = "edit" ]; then
+        return 1
+    fi
+}
+
+selected_pr=10
+
+existing_body=$(gh pr view "$selected_pr" --json body --jq '.body' 2>/dev/null)
+new_body="${existing_body}
+
+Closes #${CREATED_ISSUE_NUMBER}"
+
+if gh pr edit "$selected_pr" --body "$new_body" &>/dev/null; then
+    echo "SHOULD_NOT_SEE"
+else
+    echo -e "  ${RED}✗${NC} Failed to link issue to PR #${selected_pr}"
+    echo "LINK_FAILED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_issue_link_fail.sh"
+
+    run "$TEST_DIR/test_issue_link_fail.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Failed to link issue to PR #10"* ]]
+    [[ "$output" == *"LINK_FAILED"* ]]
+    [[ "$output" != *"SHOULD_NOT_SEE"* ]]
+}
+
+@test "create_github_issue appends Closes directive to PR body" {
+    cat > "$TEST_DIR/test_issue_closes_body.sh" << 'EOF'
+#!/usr/bin/env bash
+CREATED_ISSUE_NUMBER="42"
+
+existing_body="This PR adds authentication support"
+new_body="${existing_body}
+
+Closes #${CREATED_ISSUE_NUMBER}"
+
+echo "$new_body"
+EOF
+    chmod +x "$TEST_DIR/test_issue_closes_body.sh"
+
+    run "$TEST_DIR/test_issue_closes_body.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"This PR adds authentication support"* ]]
+    [[ "$output" == *"Closes #42"* ]]
+}
+
+@test "create_github_issue PR link uses gh pr list in script" {
+    run bash -c "grep -A5 'Offer to link the new issue' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'gh pr list'"
+    [ "$output" -ge 1 ]
+}
+
 # =============================================================================
 # Test 14: pr_management_mode() function
 # =============================================================================

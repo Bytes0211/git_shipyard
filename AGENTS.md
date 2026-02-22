@@ -47,8 +47,8 @@ git commit -m "test"
 
 ### Running Unit Tests
 ```bash
-# Run all BATS tests (34 tests)
-bats test/git-shipyard.sh.bats
+# Run all BATS tests (99 tests)
+bats test/git-shipyard.bats
 ```
 
 ### Installation Testing
@@ -86,8 +86,9 @@ git shipyard --help
 ### PR and Issue Linking Functions
 - `link_to_pr()`: After committing, prompts user to link the commit to an existing open PR by amending the commit message with `Part of #<PR>`
 - `select_issue()`: Before PR creation, prompts user to link a GitHub issue to the new PR using `Closes #<issue>` in PR body
-- Both functions list available items via `gh pr list` / `gh issue list` and parse JSON with `jq`
-- Option "0" (None) skips linking in both cases
+- `create_github_issue()`: After creating a new issue, prompts user to link it to an existing open PR by appending `Closes #<issue>` to the PR body via `gh pr edit`
+- All functions list available items via `gh pr list` / `gh issue list` and parse JSON with `jq`
+- Option "0" (None) skips linking in all cases
 
 ### Source Guard
 The script uses a source guard pattern for testability:
