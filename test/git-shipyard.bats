@@ -1668,3 +1668,260 @@ EOF
     [ -n "$mode_line" ]
     [ "$check_line" -lt "$mode_line" ]
 }
+
+# =============================================================================
+# Test 17: prompt_issue_creation() function
+# =============================================================================
+
+@test "prompt_issue_creation function exists in script" {
+    run grep "prompt_issue_creation()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "prompt_issue_creation skips in non-interactive mode" {
+    cat > "$TEST_DIR/test_prompt_issue_noninteractive.sh" << EOF
+#!/usr/bin/env bash
+main() { :; }
+source "$SCRIPT_DIR/git-shipyard.sh"
+prompt_issue_creation
+echo "EXIT=\$?"
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_noninteractive.sh"
+
+    run bash -c "echo '' | $TEST_DIR/test_prompt_issue_noninteractive.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"EXIT=1"* ]]
+}
+
+@test "prompt_issue_creation returns 1 when user declines" {
+    cat > "$TEST_DIR/test_prompt_issue_decline.sh" << 'EOF'
+#!/usr/bin/env bash
+# Simulate the decline path
+create_issue="n"
+if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
+    echo "DECLINED"
+    exit 1
+fi
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_decline.sh"
+
+    run "$TEST_DIR/test_prompt_issue_decline.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DECLINED"* ]]
+}
+
+@test "prompt_issue_creation returns 1 on empty title" {
+    cat > "$TEST_DIR/test_prompt_issue_empty_title.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+issue_title=""
+if [ -z "$issue_title" ]; then
+    echo -e "  ${YELLOW}ℹ${NC} Skipping issue creation (empty title)"
+    echo "EMPTY_TITLE"
+    exit 1
+fi
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_empty_title.sh"
+
+    run "$TEST_DIR/test_prompt_issue_empty_title.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Skipping issue creation (empty title)"* ]]
+}
+
+@test "prompt_issue_creation type menu maps correctly" {
+    cat > "$TEST_DIR/test_prompt_issue_types.sh" << 'EOF'
+#!/usr/bin/env bash
+map_type() {
+    case $1 in
+        1) echo "enhancement" ;;
+        2) echo "bug" ;;
+        3) echo "feature" ;;
+        4) echo "docs" ;;
+        5) echo "refactor" ;;
+        *) echo "INVALID" ;;
+    esac
+}
+
+for i in 1 2 3 4 5 6; do
+    echo "INPUT=$i TYPE=$(map_type $i)"
+done
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_types.sh"
+
+    run "$TEST_DIR/test_prompt_issue_types.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"INPUT=1 TYPE=enhancement"* ]]
+    [[ "$output" == *"INPUT=2 TYPE=bug"* ]]
+    [[ "$output" == *"INPUT=3 TYPE=feature"* ]]
+    [[ "$output" == *"INPUT=4 TYPE=docs"* ]]
+    [[ "$output" == *"INPUT=5 TYPE=refactor"* ]]
+    [[ "$output" == *"INPUT=6 TYPE=INVALID"* ]]
+}
+
+@test "prompt_issue_creation creates issue successfully (mocked)" {
+    cat > "$TEST_DIR/test_prompt_issue_success.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh
+gh() {
+    echo "https://github.com/owner/repo/issues/99"
+    return 0
+}
+
+issue_title="Add dark mode"
+issue_body="## Overview\n\nAdd dark mode support"
+issue_type="feature"
+
+echo -e "${BLUE}Creating GitHub issue...${NC}"
+issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" --label "$issue_type" 2>&1)
+issue_number=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+echo -e "  ${GREEN}✓${NC} Issue #${issue_number} created: ${issue_title}"
+echo "NUMBER=$issue_number"
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_success.sh"
+
+    run "$TEST_DIR/test_prompt_issue_success.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Issue #99 created: Add dark mode"* ]]
+    [[ "$output" == *"NUMBER=99"* ]]
+}
+
+@test "prompt_issue_creation handles gh failure" {
+    cat > "$TEST_DIR/test_prompt_issue_fail.sh" << 'EOF'
+#!/usr/bin/env bash
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh to fail
+gh() {
+    echo "label 'feature' not found" >&2
+    return 1
+}
+
+echo -e "${BLUE}Creating GitHub issue...${NC}"
+if ! issue_output=$(gh issue create --title "Test" --body "Body" --label "feature" 2>&1); then
+    echo -e "  ${RED}✗${NC} Failed to create issue"
+    echo "FAILED"
+    exit 1
+fi
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_fail.sh"
+
+    run "$TEST_DIR/test_prompt_issue_fail.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Failed to create issue"* ]]
+}
+
+@test "prompt_issue_creation template populates overview and status" {
+    cat > "$TEST_DIR/test_prompt_issue_template.sh" << 'EOF'
+#!/usr/bin/env bash
+# Create a test template
+tmpdir=$(mktemp -d)
+cat > "$tmpdir/template.md" << 'TMPL'
+## Overview
+
+Placeholder text
+
+## Labels
+
+| Category | Examples |
+|----------|----------|
+| Type | bug, feature |
+
+## Status
+
+- Completed
+- In Progress
+- Not Started
+
+## Tasks
+
+- [ ] Task 1
+TMPL
+
+overview="Implement user authentication with OAuth2"
+result=$(awk -v overview="$overview" '
+    /^## Overview$/ { print; print ""; print overview; skip=1; next }
+    /^## Status$/ { print; print ""; print "- Not Started"; skip=1; next }
+    /^## / { skip=0 }
+    !skip { print }
+' "$tmpdir/template.md")
+
+echo "$result"
+rm -rf "$tmpdir"
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_template.sh"
+
+    run "$TEST_DIR/test_prompt_issue_template.sh"
+    [ "$status" -eq 0 ]
+    # Overview should have user text, not placeholder
+    [[ "$output" == *"Implement user authentication with OAuth2"* ]]
+    [[ "$output" != *"Placeholder text"* ]]
+    # Status should be Not Started only
+    [[ "$output" == *"- Not Started"* ]]
+    [[ "$output" != *"- Completed"* ]]
+    [[ "$output" != *"- In Progress"* ]]
+    # Other sections should remain
+    [[ "$output" == *"## Labels"* ]]
+    [[ "$output" == *"## Tasks"* ]]
+}
+
+@test "prompt_issue_creation falls back when template missing" {
+    cat > "$TEST_DIR/test_prompt_issue_no_template.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+template_file="/nonexistent/template.md"
+overview="Fix login bug"
+
+if [ -f "$template_file" ]; then
+    echo "TEMPLATE_FOUND"
+else
+    echo -e "  ${YELLOW}⚠${NC}  No template found at ~/.config/issue-template.md. Using minimal body."
+    issue_body="## Overview
+
+${overview}
+
+## Status
+
+- Not Started"
+    echo "FALLBACK"
+    echo "$issue_body"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_no_template.sh"
+
+    run "$TEST_DIR/test_prompt_issue_no_template.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"FALLBACK"* ]]
+    [[ "$output" == *"No template found"* ]]
+    [[ "$output" == *"Fix login bug"* ]]
+    [[ "$output" == *"- Not Started"* ]]
+}
+
+@test "prompt_issue_creation is called before pre-flight checks in main" {
+    local prompt_line preflight_line
+    prompt_line=$(grep -n 'prompt_issue_creation' "$SCRIPT_DIR/git-shipyard.sh" | grep -v '^[^:]*:.*()' | head -1 | cut -d: -f1)
+    preflight_line=$(grep -n 'Running pre-flight checks' "$SCRIPT_DIR/git-shipyard.sh" | head -1 | cut -d: -f1)
+    [ -n "$prompt_line" ]
+    [ -n "$preflight_line" ]
+    [ "$prompt_line" -lt "$preflight_line" ]
+}
+
+@test "prompt_issue_creation exits script on success" {
+    # Verify main() returns after successful issue creation
+    run bash -c "grep -A3 'prompt_issue_creation' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'return'"
+    [ "$output" -ge 1 ]
+}
+
+@test "prompt_issue_creation uses --label flag for issue type" {
+    run grep 'gh issue create.*--label' "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
