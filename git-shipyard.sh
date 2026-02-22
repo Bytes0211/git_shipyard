@@ -749,7 +749,7 @@ close_pr() {
     read -r -p "🗑️  Also delete the remote branch? (y/N): " delete_branch
     echo ""
 
-    read -r -p "⚠️  Proceed with closing? (y/N): " confirm
+    read -r -p "⚠️  Proceed with closing PR? (y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         echo -e "🚫 ${YELLOW}Operation cancelled.${NC}"
         return 0
