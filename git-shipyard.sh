@@ -15,7 +15,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --base)
             if [ -z "$2" ] || [[ "$2" == --* ]]; then
-                echo "Error: Missing value for --base"
+                echo "❌ Error: Missing value for --base"
                 exit 1
             fi
             BASE_BRANCH="$2"
@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --head)
             if [ -z "$2" ] || [[ "$2" == --* ]]; then
-                echo "Error: Missing value for --head"
+                echo "❌ Error: Missing value for --head"
                 exit 1
             fi
             HEAD_BRANCH="$2"
@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            echo "Unknown option: $1"
+            echo "❌ Unknown option: $1"
             exit 1
             ;;
     esac
@@ -74,8 +74,11 @@ spinner() {
 
 # Error handler
 error_exit() {
-    echo -e "\n${RED}Error: $1${NC}" >&2
-    echo -e "${YELLOW}Goodbye!${NC}"
+    echo -e "\n❌ ${RED}Error: $1${NC}" >&2
+    echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║        👋 Goodbye! See you later!        ║"
+    echo "╚══════════════════════════════════════════╝"
     exit 1
 }
 
@@ -166,7 +169,7 @@ format_message_preview() {
 
 # Prompt for commit message (single-line or multi-line via editor)
 get_commit_message() {
-    echo -e "${YELLOW}Enter your commit message:${NC}"
+    echo -e "✏️  ${YELLOW}Enter your commit message:${NC}"
 
     # If not interactive (piped input), use simple single-line mode
     if [ ! -t 0 ]; then
@@ -208,7 +211,7 @@ get_commit_message() {
                 break
                 ;;
             *)
-                echo -e "${RED}Invalid choice. Enter 1 or 2.${NC}"
+                echo -e "❌ ${RED}Invalid choice. Enter 1 or 2.${NC}"
                 ;;
         esac
     done
@@ -219,14 +222,14 @@ link_to_pr() {
     local commit_msg="$1"
 
     echo ""
-    echo -e "${BLUE}Fetching open pull requests...${NC}"
+    echo -e "📡 ${BLUE}Fetching open pull requests...${NC}"
 
     # Get open PRs as JSON and parse them
     local pr_list
     pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
 
     if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
-        echo -e "  ${YELLOW}ℹ${NC} No open pull requests found"
+        echo -e "  ℹ️  No open pull requests found"
         return 1
     fi
 
@@ -244,7 +247,7 @@ link_to_pr() {
     local pr_count=${#pr_numbers[@]}
 
     echo ""
-    echo -e "${YELLOW}Link this commit to an existing PR?${NC}"
+    echo -e "🔗 ${YELLOW}Link this commit to an existing PR?${NC}"
     echo ""
 
     # Display PR options
@@ -258,18 +261,18 @@ link_to_pr() {
     # Get user selection
     local selection
     while true; do
-        read -r -p "Select PR [0-${pr_count}]: " selection
+        read -r -p "🔢 Select PR [0-${pr_count}]: " selection
 
         # Validate input
         if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$pr_count" ]; then
             break
         fi
-        echo -e "${RED}Invalid selection. Please enter a number between 0 and ${pr_count}.${NC}"
+        echo -e "❌ ${RED}Invalid selection. Please enter a number between 0 and ${pr_count}.${NC}"
     done
 
     # Handle selection
     if [ "$selection" -eq 0 ]; then
-        echo -e "  ${YELLOW}ℹ${NC} Skipping PR link"
+        echo -e "  ℹ️  Skipping PR link"
         return 1
     fi
 
@@ -277,8 +280,8 @@ link_to_pr() {
     local selected_title=${pr_titles[$((selection - 1))]}
 
     echo ""
-    echo -e "${BLUE}Linking commit to PR #${selected_pr}...${NC}"
-    echo -e "  ${YELLOW}⚠${NC}  Warning: This will amend the commit and change its SHA"
+    echo -e "🔗 ${BLUE}Linking commit to PR #${selected_pr}...${NC}"
+    echo -e "  ⚠️  Warning: This will amend the commit and change its SHA"
 
     # Store original commit hash for potential revert
     local original_hash
@@ -290,12 +293,12 @@ link_to_pr() {
 Part of #${selected_pr}"
 
     if ! git commit --amend -m "$new_message"; then
-        echo -e "  ${RED}✗${NC} Failed to amend commit"
-        echo -e "  ${YELLOW}ℹ${NC} Original commit preserved at: ${original_hash}"
+        echo -e "  ❌ Failed to amend commit"
+        echo -e "  ℹ️  Original commit preserved at: ${original_hash}"
         return 1
     fi
 
-    echo -e "  ${GREEN}✓${NC} Commit linked to PR #${selected_pr}: ${selected_title}"
+    echo -e "  ✅ Commit linked to PR #${selected_pr}: ${selected_title}"
     return 0
 }
 
@@ -310,14 +313,14 @@ select_issue() {
     CREATED_ISSUE_FOR_PR=""
 
     echo ""
-    echo -e "${BLUE}Fetching open issues...${NC}"
+    echo -e "📡 ${BLUE}Fetching open issues...${NC}"
 
     # Get open issues as JSON and parse them
     local issue_list
     issue_list=$(gh issue list --state open --json number,title --limit 20 2>/dev/null)
 
     if [ -z "$issue_list" ] || [ "$issue_list" = "[]" ]; then
-        echo -e "  ${YELLOW}ℹ${NC} No open issues found"
+        echo -e "  ℹ️  No open issues found"
 
         # Skip creation prompt in non-interactive mode
         if [ ! -t 0 ]; then
@@ -327,9 +330,9 @@ select_issue() {
         # Offer to create a new issue to link to the PR
         echo ""
         local create_issue
-        read -r -p "Create a new issue to link to this PR? (y/N): " create_issue
+        read -r -p "🌱 Create a new issue to link to this PR? (y/N): " create_issue
         if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
-            echo -e "  ${YELLOW}ℹ${NC} Skipping issue link"
+            echo -e "  ℹ️  Skipping issue link"
             return 1
         fi
 
@@ -351,7 +354,7 @@ select_issue() {
     local issue_count=${#issue_numbers[@]}
 
     echo ""
-    echo -e "${YELLOW}Link an issue to this PR?${NC}"
+    echo -e "🔗 ${YELLOW}Link an issue to this PR?${NC}"
     echo ""
 
     # Display issue options
@@ -365,25 +368,25 @@ select_issue() {
     # Get user selection
     local selection
     while true; do
-        read -r -p "Select issue [0-${issue_count}]: " selection
+        read -r -p "🔢 Select issue [0-${issue_count}]: " selection
 
         # Validate input
         if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$issue_count" ]; then
             break
         fi
-        echo -e "${RED}Invalid selection. Please enter a number between 0 and ${issue_count}.${NC}"
+        echo -e "❌ ${RED}Invalid selection. Please enter a number between 0 and ${issue_count}.${NC}"
     done
 
     # Handle selection
     if [ "$selection" -eq 0 ]; then
-        echo -e "  ${YELLOW}ℹ${NC} Skipping issue link"
+        echo -e "  ℹ️  Skipping issue link"
         return 1
     fi
 
     SELECTED_ISSUE=${issue_numbers[$((selection - 1))]}
     local selected_title=${issue_titles[$((selection - 1))]}
 
-    echo -e "  ${GREEN}✓${NC} Will link issue #${SELECTED_ISSUE}: ${selected_title}"
+    echo -e "  ✅ Will link issue #${SELECTED_ISSUE}: ${selected_title}"
     return 0
 }
 
@@ -392,18 +395,18 @@ select_issue() {
 _create_issue_for_pr() {
     # Prompt for issue title
     echo ""
-    echo -e "${YELLOW}Enter issue title:${NC}"
+    echo -e "✏️  ${YELLOW}Enter issue title:${NC}"
     local issue_title
     read -r -p "> " issue_title
 
     if [ -z "$issue_title" ]; then
-        echo -e "  ${YELLOW}ℹ${NC} Skipping issue creation (empty title)"
+        echo -e "  ℹ️  Skipping issue creation (empty title)"
         return 1
     fi
 
     # Prompt for issue body
     echo ""
-    echo -e "${YELLOW}Enter issue body:${NC}"
+    echo -e "✏️  ${YELLOW}Enter issue body:${NC}"
     echo -e "  ${CYAN}1)${NC} Single line (type here)"
     echo -e "  ${CYAN}2)${NC} Multi-line (open editor)"
     echo ""
@@ -428,7 +431,7 @@ _create_issue_for_pr() {
                 if [ -f "$template_file" ]; then
                     cat "$template_file" > "$tmpfile"
                 else
-                    echo -e "  ${YELLOW}⚠${NC}  Warning: No issue template found at ~/.config/issue-template.md. Using blank template."
+                    echo -e "  ⚠️  Warning: No issue template found at ~/.config/issue-template.md. Using blank template."
                     echo "" > "$tmpfile"
                 fi
 
@@ -440,17 +443,17 @@ _create_issue_for_pr() {
                 break
                 ;;
             *)
-                echo -e "${RED}Invalid choice. Enter 1 or 2.${NC}"
+                echo -e "❌ ${RED}Invalid choice. Enter 1 or 2.${NC}"
                 ;;
         esac
     done
 
     # Create the issue
     echo ""
-    echo -e "${BLUE}Creating GitHub issue...${NC}"
+    echo -e "🌱 ${BLUE}Creating GitHub issue...${NC}"
     local issue_output
     if ! issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" 2>&1); then
-        echo -e "  ${RED}✗${NC} Failed to create issue"
+        echo -e "  ❌ Failed to create issue"
         echo "$issue_output" >&2
         return 1
     fi
@@ -458,8 +461,8 @@ _create_issue_for_pr() {
     # Extract issue number from the returned URL
     SELECTED_ISSUE=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
     CREATED_ISSUE_FOR_PR="$issue_title"
-    echo -e "  ${GREEN}✓${NC} Issue #${SELECTED_ISSUE} created: ${issue_title}"
-    echo -e "  ${GREEN}✓${NC} Will link issue #${SELECTED_ISSUE} to this PR"
+    echo -e "  ✅ Issue #${SELECTED_ISSUE} created: ${issue_title}"
+    echo -e "  ✅ Will link issue #${SELECTED_ISSUE} to this PR"
     return 0
 }
 
@@ -478,13 +481,13 @@ check_merge_in_progress() {
     unresolved=$(git diff --name-only --diff-filter=U 2>/dev/null)
 
     if [ -n "$unresolved" ]; then
-        echo -e "${RED}A merge is in progress with unresolved conflicts:${NC}"
+        echo -e "❌ ${RED}A merge is in progress with unresolved conflicts:${NC}"
         echo ""
         while IFS= read -r file; do
-            echo -e "  ${RED}•${NC} $file"
+            echo -e "  ❌ $file"
         done <<< "$unresolved"
         echo ""
-        echo -e "${YELLOW}To continue:${NC}"
+        echo -e "👉 ${YELLOW}To continue:${NC}"
         echo -e "  1. Resolve the conflicts in the files listed above"
         echo -e "  2. Run: git add <resolved-file>"
         echo -e "  3. Re-run git-shipyard"
@@ -493,18 +496,18 @@ check_merge_in_progress() {
     fi
 
     # All conflicts resolved — complete the merge
-    echo -e "${BLUE}Completing merge after conflict resolution...${NC}"
+    echo -e "🔀 ${BLUE}Completing merge after conflict resolution...${NC}"
     if ! git commit --no-edit; then
         error_exit "Failed to complete merge commit."
     fi
-    echo -e "  ${GREEN}✓${NC} Merge committed — ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+    echo -e "  ✅ Merge committed — ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
 
     # Push the merge commit so it reaches the remote before PR creation
-    echo -e "${BLUE}Pushing merge commit to origin/${HEAD_BRANCH}...${NC}"
+    echo -e "🚀 ${BLUE}Pushing merge commit to origin/${HEAD_BRANCH}...${NC}"
     if ! git push origin "${HEAD_BRANCH}" 2>/dev/null; then
         error_exit "Failed to push merge commit to remote."
     fi
-    echo -e "  ${GREEN}✓${NC} Merge commit pushed to remote"
+    echo -e "  ✅ Merge commit pushed to remote"
     echo ""
 }
 
@@ -515,39 +518,39 @@ SYNC_RESULT=""
 sync_with_base() {
     SYNC_RESULT=""
     echo ""
-    echo -e "${BLUE}Syncing ${HEAD_BRANCH} with ${BASE_BRANCH} before PR...${NC}"
+    echo -e "🔄 ${BLUE}Syncing ${HEAD_BRANCH} with ${BASE_BRANCH} before PR...${NC}"
 
     # Fetch latest base branch from remote
     if ! git fetch origin "${BASE_BRANCH}" 2>/dev/null; then
-        echo -e "  ${YELLOW}⚠${NC}  Could not fetch ${BASE_BRANCH} — skipping sync"
+        echo -e "  ⚠️  Could not fetch ${BASE_BRANCH} — skipping sync"
         SYNC_RESULT="skipped"
         return 0
     fi
 
     # Check if head already contains all base commits (already up to date)
     if git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD 2>/dev/null; then
-        echo -e "  ${GREEN}✓${NC} ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+        echo -e "  ✅ ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
         SYNC_RESULT="up_to_date"
         return 0
     fi
 
     # Merge base into head to catch any new changes
-    echo -e "${BLUE}Merging origin/${BASE_BRANCH} into ${HEAD_BRANCH}...${NC}"
+    echo -e "🔀 ${BLUE}Merging origin/${BASE_BRANCH} into ${HEAD_BRANCH}...${NC}"
     if ! git merge --no-ff "origin/${BASE_BRANCH}" 2>/dev/null; then
         # Collect conflicting files
         local conflict_files
         conflict_files=$(git diff --name-only --diff-filter=U 2>/dev/null)
 
-        echo -e "  ${RED}✗${NC} Merge conflict with ${BASE_BRANCH}"
+        echo -e "  ❌ Merge conflict with ${BASE_BRANCH}"
         echo ""
-        echo -e "${YELLOW}Conflicting files:${NC}"
+        echo -e "⚠️  ${YELLOW}Conflicting files:${NC}"
         if [ -n "$conflict_files" ]; then
             while IFS= read -r file; do
-                echo -e "  ${RED}•${NC} $file"
+                echo -e "  ❌ $file"
             done <<< "$conflict_files"
         fi
         echo ""
-        echo -e "${YELLOW}To resolve:${NC}"
+        echo -e "👉 ${YELLOW}To resolve:${NC}"
         echo -e "  1. Resolve the conflicts in the files listed above"
         echo -e "  2. Run: git add <resolved-file>"
         echo -e "  3. Re-run git-shipyard to continue"
@@ -555,57 +558,57 @@ sync_with_base() {
         error_exit "Merge conflicts must be resolved before creating a PR."
     fi
 
-    echo -e "  ${GREEN}✓${NC} ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+    echo -e "  ✅ ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
 
     # Push the merge commit to remote so the PR includes the sync changes
-    echo -e "${BLUE}Pushing merge commit to origin/${HEAD_BRANCH}...${NC}"
+    echo -e "🚀 ${BLUE}Pushing merge commit to origin/${HEAD_BRANCH}...${NC}"
     if ! git push origin "${HEAD_BRANCH}" 2>/dev/null; then
         error_exit "Failed to push merge commit to remote."
     fi
-    echo -e "  ${GREEN}✓${NC} Merge commit pushed to remote"
+    echo -e "  ✅ Merge commit pushed to remote"
     SYNC_RESULT="synced"
 }
 
 # Reset local dev environment: pull latest base branch, recreate head branch
 reset_dev_environment() {
     echo ""
-    echo -e "${BLUE}Resetting local ${HEAD_BRANCH} environment...${NC}"
+    echo -e "🔄 ${BLUE}Resetting local ${HEAD_BRANCH} environment...${NC}"
 
     local current_branch
     current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
 
     # Switch to base branch if not already on it
     if [ "$current_branch" != "$BASE_BRANCH" ]; then
-        echo -e "${BLUE}Switching to ${BASE_BRANCH}...${NC}"
+        echo -e "🔄 ${BLUE}Switching to ${BASE_BRANCH}...${NC}"
         if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
             error_exit "Could not switch to ${BASE_BRANCH}."
         fi
-        echo -e "  ${GREEN}✓${NC} Switched to ${BASE_BRANCH}"
+        echo -e "  ✅ Switched to ${BASE_BRANCH}"
     fi
 
     # Pull latest base branch
-    echo -e "${BLUE}Pulling latest ${BASE_BRANCH}...${NC}"
+    echo -e "📡 ${BLUE}Pulling latest ${BASE_BRANCH}...${NC}"
     if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
-        echo -e "  ${YELLOW}⚠${NC}  Could not pull latest ${BASE_BRANCH}"
+        echo -e "  ⚠️  Could not pull latest ${BASE_BRANCH}"
     else
-        echo -e "  ${GREEN}✓${NC} ${BASE_BRANCH} is up to date"
+        echo -e "  ✅ ${BASE_BRANCH} is up to date"
     fi
 
     # Delete local head branch if it exists
     if git show-ref --verify --quiet "refs/heads/$HEAD_BRANCH"; then
-        echo -e "${BLUE}Deleting local branch '${HEAD_BRANCH}'...${NC}"
+        echo -e "🗑️  ${BLUE}Deleting local branch '${HEAD_BRANCH}'...${NC}"
         if ! git branch -D "$HEAD_BRANCH" 2>/dev/null; then
             error_exit "Could not delete local branch '${HEAD_BRANCH}'."
         fi
-        echo -e "  ${GREEN}✓${NC} Local branch '${HEAD_BRANCH}' deleted"
+        echo -e "  ✅ Local branch '${HEAD_BRANCH}' deleted"
     fi
 
     # Create fresh head branch from base
-    echo -e "${BLUE}Creating fresh ${HEAD_BRANCH} from ${BASE_BRANCH}...${NC}"
+    echo -e "🌱 ${BLUE}Creating fresh ${HEAD_BRANCH} from ${BASE_BRANCH}...${NC}"
     if ! git checkout -b "$HEAD_BRANCH" 2>/dev/null; then
         error_exit "Could not create branch '${HEAD_BRANCH}'."
     fi
-    echo -e "  ${GREEN}✓${NC} Fresh ${HEAD_BRANCH} created from ${BASE_BRANCH}"
+    echo -e "  ✅ Fresh ${HEAD_BRANCH} created from ${BASE_BRANCH}"
 }
 
 # View PR details and comments
@@ -613,7 +616,7 @@ view_pr_details() {
     local pr_number="$1"
 
     echo ""
-    echo -e "${BLUE}Fetching PR #${pr_number} details...${NC}"
+    echo -e "📡 ${BLUE}Fetching PR #${pr_number} details...${NC}"
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
 
     # Fetch PR metadata as JSON
@@ -621,7 +624,7 @@ view_pr_details() {
     pr_json=$(gh pr view "$pr_number" --json title,body,state,author,labels,createdAt,headRefName,baseRefName,additions,deletions,changedFiles 2>/dev/null)
 
     if [ -z "$pr_json" ]; then
-        echo -e "  ${RED}✗${NC} Could not fetch PR details"
+        echo -e "  ❌ Could not fetch PR details"
         return 1
     fi
 
@@ -658,17 +661,17 @@ view_pr_details() {
 
     # Fetch and display comments
     echo ""
-    echo -e "${BLUE}Fetching comments...${NC}"
+    echo -e "📡 ${BLUE}Fetching comments...${NC}"
 
     local comments_json
     comments_json=$(gh pr view "$pr_number" --json comments --jq '.comments' 2>/dev/null)
 
     if [ -z "$comments_json" ] || [ "$comments_json" = "[]" ] || [ "$comments_json" = "null" ]; then
-        echo -e "  ${YELLOW}ℹ${NC} No comments on this PR"
+        echo -e "  ℹ️  No comments on this PR"
     else
         local comment_count
         comment_count=$(echo "$comments_json" | jq 'length')
-        echo -e "  ${GREEN}${comment_count} comment(s)${NC}"
+        echo -e "  💬 ${GREEN}${comment_count} comment(s)${NC}"
         echo ""
 
         # Iterate over each comment
@@ -695,7 +698,7 @@ view_pr_details() {
         review_count=$(echo "$reviews_json" | jq '[.[] | select(.body != "")] | length')
 
         if [ "$review_count" -gt 0 ]; then
-            echo -e "${BLUE}Reviews:${NC}"
+            echo -e "📝 ${BLUE}Reviews:${NC}"
             echo ""
 
             local j=0
@@ -736,24 +739,24 @@ close_pr() {
     local pr_title="$2"
 
     echo ""
-    echo -e "${YELLOW}Close PR #${pr_number}: ${pr_title}?${NC}"
+    echo -e "⚠️  ${YELLOW}Close PR #${pr_number}: ${pr_title}?${NC}"
     echo ""
-    echo -e "  ${YELLOW}⚠${NC}  This will close the PR without merging."
+    echo -e "  ⚠️  This will close the PR without merging."
     echo ""
 
     # Ask whether to also delete the branch
     local delete_branch="n"
-    read -r -p "Also delete the remote branch? (y/N): " delete_branch
+    read -r -p "🗑️  Also delete the remote branch? (y/N): " delete_branch
     echo ""
 
-    read -r -p "Proceed with closing? (y/N): " confirm
+    read -r -p "⚠️  Proceed with closing? (y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}Operation cancelled.${NC}"
+        echo -e "🚫 ${YELLOW}Operation cancelled.${NC}"
         return 0
     fi
 
     echo ""
-    echo -e "${BLUE}Closing PR #${pr_number}...${NC}"
+    echo -e "🔒 ${BLUE}Closing PR #${pr_number}...${NC}"
 
     local close_cmd=(gh pr close "$pr_number")
     if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
@@ -762,14 +765,14 @@ close_pr() {
 
     local close_output
     if ! close_output=$("${close_cmd[@]}" 2>&1); then
-        echo -e "  ${RED}✗${NC} Failed to close PR"
+        echo -e "  ❌ Failed to close PR"
         echo "$close_output" >&2
         return 1
     fi
-    echo -e "  ${GREEN}✓${NC} PR #${pr_number} closed"
+    echo -e "  ✅ PR #${pr_number} closed"
 
     if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
-        echo -e "  ${GREEN}✓${NC} Remote branch deleted"
+        echo -e "  ✅ Remote branch deleted"
     fi
 
     # Clean up local branch if it exists
@@ -779,24 +782,24 @@ close_pr() {
     if [ -n "$pr_head_branch" ] && git show-ref --verify --quiet "refs/heads/$pr_head_branch"; then
         echo ""
         local delete_local
-        read -r -p "Delete local branch '${pr_head_branch}'? (y/N): " delete_local
+        read -r -p "🗑️  Delete local branch '${pr_head_branch}'? (y/N): " delete_local
         if [[ "$delete_local" =~ ^[Yy]$ ]]; then
             if ! git branch -d "$pr_head_branch" 2>/dev/null; then
-                echo -e "  ${YELLOW}⚠${NC}  Could not delete local branch '${pr_head_branch}'"
-                echo -e "  ${YELLOW}ℹ${NC} To force delete: git branch -D ${pr_head_branch}"
+                echo -e "  ⚠️  Could not delete local branch '${pr_head_branch}'"
+                echo -e "  👉 To force delete: git branch -D ${pr_head_branch}"
             else
-                echo -e "  ${GREEN}✓${NC} Local branch '${pr_head_branch}' deleted"
+                echo -e "  ✅ Local branch '${pr_head_branch}' deleted"
             fi
         fi
     fi
 
     # Success
     echo ""
-    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║     ✓ PR closed!                       ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+    echo "╔══════════════════════════════════════════╗"
+    echo "║       🎉 PR closed successfully!         ║"
+    echo "╚══════════════════════════════════════════╝"
     echo ""
-    echo -e "${CYAN}Summary:${NC}"
+    echo -e "📝 ${CYAN}Summary:${NC}"
     echo -e "  • PR #${pr_number} closed: ${pr_title}"
     if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
         echo -e "  • Remote branch deleted"
@@ -811,19 +814,19 @@ squash_merge_pr() {
     local pr_title="$2"
 
     echo ""
-    echo -e "${BLUE}The following actions will be performed:${NC}"
+    echo -e "📝 ${BLUE}The following actions will be performed:${NC}"
     echo -e "  1. Squash-merge PR #${pr_number}: ${pr_title}"
     echo -e "  2. Delete remote branch (--delete-branch)"
     echo -e "  3. Switch to ${BASE_BRANCH} and pull latest"
     echo -e "  4. Delete local head branch"
     echo ""
-    echo -e "  ${YELLOW}⚠${NC}  Note: Squash-merge does not record merge history."
+    echo -e "  ⚠️  Note: Squash-merge does not record merge history."
     echo -e "       If you keep the branch and merge again, duplicate conflicts may arise."
     echo ""
 
-    read -r -p "Proceed? (y/N): " confirm
+    read -r -p "⚠️  Proceed? (y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}Operation cancelled.${NC}"
+        echo -e "🚫 ${YELLOW}Operation cancelled.${NC}"
         return 0
     fi
 
@@ -834,40 +837,40 @@ squash_merge_pr() {
     pr_head_branch=$(gh pr view "$pr_number" --json headRefName -q '.headRefName' 2>/dev/null)
 
     # Squash-merge the PR (also deletes the remote branch)
-    echo -e "${BLUE}Squash-merging PR #${pr_number}...${NC}"
+    echo -e "🔀 ${BLUE}Squash-merging PR #${pr_number}...${NC}"
     local merge_output
     if ! merge_output=$(gh pr merge "$pr_number" --squash --delete-branch 2>&1); then
         if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
-            echo -e "  ${RED}✗${NC} Merge conflict detected — resolve manually and retry"
+            echo -e "  ❌ Merge conflict detected — resolve manually and retry"
         else
-            echo -e "  ${RED}✗${NC} Merge failed"
+            echo -e "  ❌ Merge failed"
             echo "$merge_output" >&2
         fi
         error_exit "Failed to merge PR #${pr_number}."
     fi
-    echo -e "  ${GREEN}✓${NC} PR #${pr_number} squash-merged and remote branch deleted"
+    echo -e "  ✅ PR #${pr_number} squash-merged and remote branch deleted"
 
     # Switch to base branch and pull latest
-    echo -e "${BLUE}Switching to ${BASE_BRANCH} and pulling...${NC}"
+    echo -e "🔄 ${BLUE}Switching to ${BASE_BRANCH} and pulling...${NC}"
     if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
-        echo -e "  ${YELLOW}⚠${NC}  Could not switch to ${BASE_BRANCH} automatically"
+        echo -e "  ⚠️  Could not switch to ${BASE_BRANCH} automatically"
     else
         if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
-            echo -e "  ${YELLOW}⚠${NC}  Could not pull latest ${BASE_BRANCH}"
+            echo -e "  ⚠️  Could not pull latest ${BASE_BRANCH}"
         else
-            echo -e "  ${GREEN}✓${NC} Switched to ${BASE_BRANCH} and pulled latest"
+            echo -e "  ✅ Switched to ${BASE_BRANCH} and pulled latest"
         fi
     fi
 
     # Delete local head branch if it still exists
     local branch_deleted=false
     if [ -n "$pr_head_branch" ] && git show-ref --verify --quiet "refs/heads/$pr_head_branch"; then
-        echo -e "${BLUE}Deleting local branch '${pr_head_branch}'...${NC}"
+        echo -e "🗑️  ${BLUE}Deleting local branch '${pr_head_branch}'...${NC}"
         if ! git branch -d "$pr_head_branch" 2>/dev/null; then
-            echo -e "  ${YELLOW}⚠${NC}  Could not delete local branch '${pr_head_branch}'"
-            echo -e "  ${YELLOW}ℹ${NC} To force delete: git branch -D ${pr_head_branch}"
+            echo -e "  ⚠️  Could not delete local branch '${pr_head_branch}'"
+            echo -e "  👉 To force delete: git branch -D ${pr_head_branch}"
         else
-            echo -e "  ${GREEN}✓${NC} Local branch '${pr_head_branch}' deleted"
+            echo -e "  ✅ Local branch '${pr_head_branch}' deleted"
             branch_deleted=true
         fi
     fi
@@ -877,11 +880,11 @@ squash_merge_pr() {
 
     # Success message
     echo ""
-    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║     ✓ All actions completed!           ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+    echo "╔══════════════════════════════════════════╗"
+    echo "║     🎉 All actions completed!            ║"
+    echo "╚══════════════════════════════════════════╝"
     echo ""
-    echo -e "${CYAN}Summary:${NC}"
+    echo -e "📝 ${CYAN}Summary:${NC}"
     echo -e "  • PR #${pr_number} squash-merged: ${pr_title}"
     echo -e "  • Remote branch deleted"
     if [ "$branch_deleted" = true ]; then
@@ -897,7 +900,7 @@ view_linked_issues() {
     local pr_number="$1"
 
     echo ""
-    echo -e "${BLUE}Fetching linked issues for PR #${pr_number}...${NC}"
+    echo -e "📡 ${BLUE}Fetching linked issues for PR #${pr_number}...${NC}"
 
     # Fetch PR body to parse for issue references
     local pr_body
@@ -922,14 +925,14 @@ view_linked_issues() {
     fi
 
     if [ ${#issue_refs[@]} -eq 0 ]; then
-        echo -e "  ${YELLOW}ℹ${NC} No linked issues found in PR body"
+        echo -e "  ℹ️  No linked issues found in PR body"
         echo ""
-        echo -e "  ${CYAN}Tip:${NC} Issues are detected from the PR description using keywords like:"
+        echo -e "  👉 ${CYAN}Tip:${NC} Issues are detected from the PR description using keywords like:"
         echo -e "       ${CYAN}Closes #N${NC}, ${CYAN}Fixes #N${NC}, ${CYAN}Resolves #N${NC}, ${CYAN}Part of #N${NC}"
         return 0
     fi
 
-    echo -e "  ${GREEN}✓${NC} Found ${#issue_refs[@]} linked issue(s)"
+    echo -e "  ✅ Found ${#issue_refs[@]} linked issue(s)"
     echo ""
 
     # Fetch details for each linked issue
@@ -951,12 +954,12 @@ view_linked_issues() {
     done
 
     if [ ${#issue_numbers[@]} -eq 0 ]; then
-        echo -e "  ${YELLOW}ℹ${NC} Could not fetch details for linked issues"
+        echo -e "  ℹ️  Could not fetch details for linked issues"
         return 0
     fi
 
     # Display linked issues with state
-    echo -e "${YELLOW}Linked issues:${NC}"
+    echo -e "📋 ${YELLOW}Linked issues:${NC}"
     echo ""
     for i in "${!issue_numbers[@]}"; do
         local state_color="$GREEN"
@@ -977,12 +980,12 @@ view_linked_issues() {
     done
 
     if [ "$has_open" = false ]; then
-        echo -e "  ${YELLOW}ℹ${NC} All linked issues are already closed"
+        echo -e "  ℹ️  All linked issues are already closed"
         return 0
     fi
 
     # Offer to close open issues
-    echo -e "${YELLOW}Close an issue?${NC}"
+    echo -e "🔒 ${YELLOW}Close an issue?${NC}"
     echo ""
     local open_indices=()
     for i in "${!issue_numbers[@]}"; do
@@ -998,10 +1001,10 @@ view_linked_issues() {
 
     local selection
     while true; do
-        read -r -p "Enter issue # to close, 'a' for all, or 0 to skip: " selection
+        read -r -p "🔢 Enter issue # to close, 'a' for all, or 0 to skip: " selection
 
         if [ "$selection" = "0" ]; then
-            echo -e "  ${YELLOW}ℹ${NC} Skipping"
+            echo -e "  ℹ️  Skipping"
             return 0
         fi
 
@@ -1011,11 +1014,11 @@ view_linked_issues() {
             for idx in "${open_indices[@]}"; do
                 local inum="${issue_numbers[$idx]}"
                 local ititle="${issue_titles[$idx]}"
-                echo -e "${BLUE}Closing issue #${inum}...${NC}"
+                echo -e "🔒 ${BLUE}Closing issue #${inum}...${NC}"
                 if gh issue close "$inum" &>/dev/null; then
-                    echo -e "  ${GREEN}✓${NC} Issue #${inum} closed: ${ititle}"
+                    echo -e "  ✅ Issue #${inum} closed: ${ititle}"
                 else
-                    echo -e "  ${RED}✗${NC} Failed to close issue #${inum}"
+                    echo -e "  ❌ Failed to close issue #${inum}"
                 fi
             done
             echo ""
@@ -1029,21 +1032,21 @@ view_linked_issues() {
                 if [ "${issue_numbers[$idx]}" = "$selection" ]; then
                     valid=true
                     echo ""
-                    echo -e "${BLUE}Closing issue #${selection}...${NC}"
+                    echo -e "🔒 ${BLUE}Closing issue #${selection}...${NC}"
                     if gh issue close "$selection" &>/dev/null; then
-                        echo -e "  ${GREEN}✓${NC} Issue #${selection} closed: ${issue_titles[$idx]}"
+                        echo -e "  ✅ Issue #${selection} closed: ${issue_titles[$idx]}"
                     else
-                        echo -e "  ${RED}✗${NC} Failed to close issue #${selection}"
+                        echo -e "  ❌ Failed to close issue #${selection}"
                     fi
                     echo ""
                     return 0
                 fi
             done
             if [ "$valid" = false ]; then
-                echo -e "${RED}Not a valid open issue number. Try again.${NC}"
+                echo -e "❌ ${RED}Not a valid open issue number. Try again.${NC}"
             fi
         else
-            echo -e "${RED}Invalid input. Enter an issue #, 'a', or 0.${NC}"
+            echo -e "❌ ${RED}Invalid input. Enter an issue #, 'a', or 0.${NC}"
         fi
     done
 }
@@ -1051,15 +1054,17 @@ view_linked_issues() {
 # PR Management Mode: select a PR and choose an action
 pr_management_mode() {
     echo ""
-    echo -e "${BLUE}Fetching open pull requests...${NC}"
+    echo -e "📡 ${BLUE}Fetching open pull requests...${NC}"
 
     local pr_list
     pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
 
     if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
-        echo -e "  ${YELLOW}ℹ${NC} No open pull requests found"
+        echo -e "  ℹ️  No open pull requests found"
         echo ""
-        echo -e "${YELLOW}Goodbye!${NC}"
+        echo "╔══════════════════════════════════════════╗"
+        echo "║        👋 Goodbye! See you later!        ║"
+        echo "╚══════════════════════════════════════════╝"
         exit 0
     fi
 
@@ -1077,7 +1082,7 @@ pr_management_mode() {
     local pr_count=${#pr_numbers[@]}
 
     echo ""
-    echo -e "${YELLOW}Select a pull request:${NC}"
+    echo -e "📋 ${YELLOW}Select a pull request:${NC}"
     echo ""
 
     for i in "${!pr_numbers[@]}"; do
@@ -1089,18 +1094,21 @@ pr_management_mode() {
 
     local selection
     while true; do
-        read -r -p "Select PR [1-${pr_count}/x]: " selection
+        read -r -p "🔢 Select PR [1-${pr_count}/x]: " selection
 
         if [ "$selection" = "x" ] || [ "$selection" = "X" ]; then
-            echo -e "${YELLOW}Operation cancelled.${NC}"
-            echo -e "${YELLOW}Goodbye!${NC}"
+            echo -e "🚫 ${YELLOW}Operation cancelled.${NC}"
+            echo ""
+            echo "╔══════════════════════════════════════════╗"
+            echo "║        👋 Goodbye! See you later!        ║"
+            echo "╚══════════════════════════════════════════╝"
             exit 0
         fi
 
         if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "$pr_count" ]; then
             break
         fi
-        echo -e "${RED}Invalid selection. Enter a number between 1 and ${pr_count}, or 'x' to exit.${NC}"
+        echo -e "❌ ${RED}Invalid selection. Enter a number between 1 and ${pr_count}, or 'x' to exit.${NC}"
     done
 
     local selected_pr=${pr_numbers[$((selection - 1))]}
@@ -1111,17 +1119,17 @@ pr_management_mode() {
         echo ""
         echo -e "${CYAN}PR #${selected_pr}: ${selected_title}${NC}"
         echo ""
-        echo -e "${YELLOW}What would you like to do?${NC}"
+        echo -e "📋 ${YELLOW}What would you like to do?${NC}"
         echo ""
-        echo -e "  ${CYAN}1)${NC} View details & comments"
-        echo -e "  ${CYAN}2)${NC} Close PR"
-        echo -e "  ${CYAN}3)${NC} Squash-merge PR"
-        echo -e "  ${CYAN}4)${NC} View/close linked issues"
-        echo -e "  ${CYAN}x)${NC} Back"
+        echo -e "  ${CYAN}1)${NC} 🔍 View details & comments"
+        echo -e "  ${CYAN}2)${NC} 🔒 Close PR"
+        echo -e "  ${CYAN}3)${NC} 🔀 Squash-merge PR"
+        echo -e "  ${CYAN}4)${NC} 📋 View/close linked issues"
+        echo -e "  ${CYAN}x)${NC} 👋 Back"
         echo ""
 
         local action
-        read -r -p "Choose action [1-4/x]: " action
+        read -r -p "🔢 Choose action [1-4/x]: " action
 
         case "$action" in
             1)
@@ -1139,14 +1147,289 @@ pr_management_mode() {
                 view_linked_issues "$selected_pr"
                 ;;
             x|X)
-                echo -e "${YELLOW}Goodbye!${NC}"
+                echo ""
+                echo "╔══════════════════════════════════════════╗"
+                echo "║        👋 Goodbye! See you later!        ║"
+                echo "╚══════════════════════════════════════════╝"
                 return
                 ;;
             *)
-                echo -e "${RED}Invalid choice. Enter 1-4 or x.${NC}"
+                echo -e "❌ ${RED}Invalid choice. Enter 1-4 or x.${NC}"
                 ;;
         esac
     done
+}
+
+# Branch Management Mode: create or delete branches
+# Offered at startup before issue creation prompt
+# Returns 0 if branch action was performed (caller should exit), 1 otherwise (continue)
+prompt_branch_management() {
+    # Skip in non-interactive mode
+    if [ ! -t 0 ]; then
+        return 1
+    fi
+
+    local manage_branches
+    read -r -p "🔧 Manage branches? (y/N): " manage_branches
+    if [[ ! "$manage_branches" =~ ^[Yy]$ ]]; then
+        return 1
+    fi
+
+    echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║                                          ║"
+    echo "║   🔧  Git Branch Management Tool  🔧      ║"
+    echo "║                                          ║"
+    echo "║   Delete or create branches safely       ║"
+    echo "║                                          ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+
+    echo "📂 Repository: $(basename "$(git rev-parse --show-toplevel)")"
+    local current_branch
+    current_branch=$(git branch --show-current)
+    echo "🌿 Current branch: $current_branch"
+    echo ""
+
+    # Check for uncommitted changes
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "⚠️  WARNING: You have uncommitted changes."
+        echo "👉 Please commit or stash them before managing branches."
+        return 0
+    fi
+
+    # Build array of branches
+    local branches=()
+    while IFS= read -r branch; do
+        local clean_branch
+        clean_branch=$(echo "$branch" | sed 's/^[* ]*//')
+        branches+=("$clean_branch")
+    done < <(git branch --list)
+
+    if [ ${#branches[@]} -eq 0 ]; then
+        echo "❌ ERROR: No branches found in this repository."
+        return 0
+    fi
+
+    # Display numbered branch list
+    echo "📋 Available branches:"
+    echo ""
+    for i in "${!branches[@]}"; do
+        local num=$((i + 1))
+        local branch="${branches[$i]}"
+        if [ "$branch" == "$current_branch" ]; then
+            echo "   $num) $branch  ← (current)"
+        else
+            echo "   $num) $branch"
+        fi
+    done
+
+    local create_option=$(( ${#branches[@]} + 1 ))
+    echo ""
+    echo "   $create_option) 🌱 Create a new branch"
+    echo ""
+
+    local selection
+    read -r -p "🔢 Enter your choice (1-$create_option): " selection
+
+    # Validate input is not empty
+    if [ -z "$selection" ]; then
+        echo ""
+        echo "❌ ERROR: No selection made."
+        return 0
+    fi
+
+    # Validate input is a number
+    if ! [[ "$selection" =~ ^[0-9]+$ ]]; then
+        echo ""
+        echo "❌ ERROR: Invalid input. Please enter a number."
+        return 0
+    fi
+
+    # Validate input is within range
+    if [ "$selection" -lt 1 ] || [ "$selection" -gt "$create_option" ]; then
+        echo ""
+        echo "❌ ERROR: Invalid selection. Please choose a number between 1 and $create_option."
+        return 0
+    fi
+
+    # ============================================
+    # Handle CREATE NEW BRANCH
+    # ============================================
+    if [ "$selection" -eq "$create_option" ]; then
+        echo ""
+        local new_branch_name
+        read -r -p "🌱 Enter the name for the new branch: " new_branch_name
+
+        # Validate input is not empty
+        if [ -z "$new_branch_name" ]; then
+            echo ""
+            echo "❌ ERROR: No branch name provided."
+            return 0
+        fi
+
+        # Check if branch already exists locally
+        if git show-ref --verify --quiet refs/heads/"$new_branch_name"; then
+            echo ""
+            echo "❌ ERROR: Branch '$new_branch_name' already exists locally."
+            return 0
+        fi
+
+        # Confirm creation
+        echo ""
+        echo "📝 Summary of actions:"
+        echo "   🌱 Create new branch: $new_branch_name"
+        echo "   🔄 Switch to: $new_branch_name"
+        echo ""
+        local confirm
+        read -r -p "⚠️  Are you sure you want to continue? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo ""
+            echo "🚫 Aborted. No changes were made."
+            echo ""
+            echo "╔══════════════════════════════════════════╗"
+            echo "║        👋 Goodbye! See you later!        ║"
+            echo "╚══════════════════════════════════════════╝"
+            return 0
+        fi
+
+        echo ""
+        echo "🌱 Creating branch '$new_branch_name'..."
+        if ! git checkout -b "$new_branch_name"; then
+            echo "❌ ERROR: Failed to create branch '$new_branch_name'."
+            return 0
+        fi
+
+        echo ""
+        echo "🎉 All done!"
+        echo "   ✅ Branch '$new_branch_name' created and checked out."
+        echo ""
+        echo "╔══════════════════════════════════════════╗"
+        echo "║     👋 Goodbye! Happy coding! 🚀        ║"
+        echo "╚══════════════════════════════════════════╝"
+        return 0
+    fi
+
+    # ============================================
+    # Handle DELETE BRANCH
+    # ============================================
+    local branch_index=$((selection - 1))
+    local branch_name="${branches[$branch_index]}"
+
+    echo ""
+    echo "🗑️  You selected: $branch_name"
+
+    # Prevent deletion of main/master branches
+    if [[ "$branch_name" == "main" || "$branch_name" == "master" ]]; then
+        echo ""
+        echo "🚫 ERROR: Cannot delete the '$branch_name' branch. That's a protected branch!"
+        return 0
+    fi
+
+    # Notify if on the branch being deleted
+    if [ "$branch_name" == "$current_branch" ]; then
+        echo "⚠️  You are currently on the '$branch_name' branch."
+        echo "👉 Will switch to main before deleting."
+    fi
+
+    # Check if local branch exists
+    local LOCAL_EXISTS=false
+    if git show-ref --verify --quiet refs/heads/"$branch_name"; then
+        LOCAL_EXISTS=true
+        echo "✅ Local branch '$branch_name' found."
+    else
+        echo "⚠️  Local branch '$branch_name' does not exist."
+    fi
+
+    # Check if remote branch exists
+    local REMOTE_EXISTS=false
+    if git ls-remote --exit-code --heads origin "$branch_name" > /dev/null 2>&1; then
+        REMOTE_EXISTS=true
+        echo "✅ Remote branch '$branch_name' found on origin."
+    else
+        echo "⚠️  Remote branch '$branch_name' does not exist on origin."
+    fi
+
+    # If neither exists, exit
+    if [ "$LOCAL_EXISTS" = false ] && [ "$REMOTE_EXISTS" = false ]; then
+        echo ""
+        echo "❌ ERROR: Branch '$branch_name' does not exist locally or remotely."
+        echo "👉 Double-check the branch name and try again."
+        return 0
+    fi
+
+    # Summary of what will be deleted
+    echo ""
+    echo "📝 Summary of actions:"
+    if [ "$LOCAL_EXISTS" = true ]; then
+        echo "   🗑️  Delete local branch:  $branch_name"
+    fi
+    if [ "$REMOTE_EXISTS" = true ]; then
+        echo "   🗑️  Delete remote branch: origin/$branch_name"
+    fi
+    echo ""
+
+    # Confirmation prompt
+    local confirm
+    read -r -p "⚠️  Are you sure you want to continue? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo ""
+        echo "🚫 Aborted. No branches were deleted."
+        echo ""
+        echo "╔══════════════════════════════════════════╗"
+        echo "║        👋 Goodbye! See you later!        ║"
+        echo "╚══════════════════════════════════════════╝"
+        return 0
+    fi
+
+    echo ""
+
+    # Switch to main if on the branch being deleted
+    if [ "$branch_name" == "$current_branch" ]; then
+        echo "🔄 Switching to main branch..."
+        if ! git checkout main; then
+            echo "❌ ERROR: Failed to checkout main branch."
+            return 0
+        fi
+        echo "✅ Switched to main."
+        echo ""
+    fi
+
+    # Delete local branch
+    if [ "$LOCAL_EXISTS" = true ]; then
+        echo "🗑️  Deleting local branch '$branch_name'..."
+        if ! git branch -D "$branch_name"; then
+            echo "❌ ERROR: Failed to delete local branch '$branch_name'."
+            return 0
+        fi
+        echo "✅ Local branch '$branch_name' deleted."
+        echo ""
+    fi
+
+    # Delete remote branch
+    if [ "$REMOTE_EXISTS" = true ]; then
+        echo "🗑️  Deleting remote branch 'origin/$branch_name'..."
+        if ! git push origin --delete "$branch_name"; then
+            echo "❌ ERROR: Failed to delete remote branch '$branch_name'."
+            return 0
+        fi
+        echo "✅ Remote branch 'origin/$branch_name' deleted."
+        echo ""
+    fi
+
+    # Success summary
+    echo "🎉 All done! Here's what was deleted:"
+    if [ "$LOCAL_EXISTS" = true ]; then
+        echo "   ✅ Local branch:  $branch_name"
+    fi
+    if [ "$REMOTE_EXISTS" = true ]; then
+        echo "   ✅ Remote branch: origin/$branch_name"
+    fi
+    echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║     👋 Goodbye! Happy coding! 🚀        ║"
+    echo "╚══════════════════════════════════════════╝"
+    return 0
 }
 
 # Prompt to create a standalone GitHub issue before the main workflow
@@ -1158,25 +1441,25 @@ prompt_issue_creation() {
     fi
 
     local create_issue
-    read -r -p "Create a GitHub Issue? (y/N): " create_issue
+    read -r -p "📝 Create a GitHub Issue? (y/N): " create_issue
     if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
         return 1
     fi
 
     # Collect issue title
     echo ""
-    echo -e "${YELLOW}Enter issue title:${NC}"
+    echo -e "✏️  ${YELLOW}Enter issue title:${NC}"
     local issue_title
     read -r -p "> " issue_title
 
     if [ -z "$issue_title" ]; then
-        echo -e "  ${YELLOW}ℹ${NC} Skipping issue creation (empty title)"
+        echo -e "  ℹ️  Skipping issue creation (empty title)"
         return 1
     fi
 
     # Collect overview (single-line or editor, same pattern as get_commit_message)
     echo ""
-    echo -e "${YELLOW}Enter issue overview:${NC}"
+    echo -e "✏️  ${YELLOW}Enter issue overview:${NC}"
     echo -e "  ${CYAN}1)${NC} Single line (type here)"
     echo -e "  ${CYAN}2)${NC} Multi-line (open editor)"
     echo ""
@@ -1210,14 +1493,14 @@ prompt_issue_creation() {
                 break
                 ;;
             *)
-                echo -e "${RED}Invalid choice. Enter 1 or 2.${NC}"
+                echo -e "❌ ${RED}Invalid choice. Enter 1 or 2.${NC}"
                 ;;
         esac
     done
 
     # Collect issue type
     echo ""
-    echo -e "${YELLOW}Select issue type:${NC}"
+    echo -e "🏷️  ${YELLOW}Select issue type:${NC}"
     echo -e "  ${CYAN}1)${NC} enhancement"
     echo -e "  ${CYAN}2)${NC} bug"
     echo -e "  ${CYAN}3)${NC} feature"
@@ -1228,14 +1511,14 @@ prompt_issue_creation() {
     local type_selection
     local issue_type
     while true; do
-        read -r -p "Choose (1-5): " type_selection
+        read -r -p "🔢 Choose (1-5): " type_selection
         case $type_selection in
             1) issue_type="enhancement"; break ;;
             2) issue_type="bug"; break ;;
             3) issue_type="feature"; break ;;
             4) issue_type="docs"; break ;;
             5) issue_type="refactor"; break ;;
-            *) echo -e "${RED}Invalid choice. Enter a number between 1 and 5.${NC}" ;;
+            *) echo -e "❌ ${RED}Invalid choice. Enter a number between 1 and 5.${NC}" ;;
         esac
     done
 
@@ -1263,7 +1546,7 @@ ${overview}
 - Not Started"
         fi
     else
-        echo -e "  ${YELLOW}⚠${NC}  No template found at ~/.config/issue-template.md. Using minimal body."
+        echo -e "  ⚠️  No template found at ~/.config/issue-template.md. Using minimal body."
         issue_body="## Overview
 
 ${overview}
@@ -1275,17 +1558,17 @@ ${overview}
 
     # Create the issue
     echo ""
-    echo -e "${BLUE}Creating GitHub issue...${NC}"
+    echo -e "🌱 ${BLUE}Creating GitHub issue...${NC}"
     local issue_output
     if ! issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" --label "$issue_type" 2>&1); then
-        echo -e "  ${RED}✗${NC} Failed to create issue"
+        echo -e "  ❌ Failed to create issue"
         echo "$issue_output" >&2
         return 1
     fi
 
     local issue_number
     issue_number=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
-    echo -e "  ${GREEN}✓${NC} Issue #${issue_number} created: ${issue_title}"
+    echo -e "  ✅ Issue #${issue_number} created: ${issue_title}"
 
     return 0
 }
@@ -1298,43 +1581,59 @@ main() {
     clear
 
     # Welcome banner
-    echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      ${GREEN}Welcome to Git Shipyard${CYAN}             ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
     echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║                                          ║"
+    echo "║   ⚓  Welcome to Git Shipyard  ⚓         ║"
+    echo "║                                          ║"
+    echo "║   Stage, commit, push & PR in one step   ║"
+    echo "║                                          ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+
+    # Offer to manage branches (exits after completion)
+    if prompt_branch_management; then
+        echo ""
+        echo "╔══════════════════════════════════════════╗"
+        echo "║        👋 Goodbye! See you later!        ║"
+        echo "╚══════════════════════════════════════════╝"
+        return
+    fi
 
     # Offer to create a standalone GitHub issue (exits after completion)
     if prompt_issue_creation; then
         echo ""
-        echo -e "${YELLOW}Goodbye!${NC}"
+        echo "╔══════════════════════════════════════════╗"
+        echo "║        👋 Goodbye! See you later!        ║"
+        echo "╚══════════════════════════════════════════╝"
         return
     fi
 
     echo ""
 
     # Pre-flight checks
-    echo -e "${BLUE}Running pre-flight checks...${NC}"
+    echo -e "🔍 ${BLUE}Running pre-flight checks...${NC}"
 
     check_command "git"
-    echo -e "  ${GREEN}✓${NC} git found"
+    echo -e "  ✅ git found"
 
     check_command "gh"
-    echo -e "  ${GREEN}✓${NC} gh CLI found"
+    echo -e "  ✅ gh CLI found"
 
     check_command "jq"
-    echo -e "  ${GREEN}✓${NC} jq found"
+    echo -e "  ✅ jq found"
 
     check_git_repo
-    echo -e "  ${GREEN}✓${NC} Inside git repository"
+    echo -e "  ✅ Inside git repository"
 
     check_not_detached
-    echo -e "  ${GREEN}✓${NC} On a valid branch"
+    echo -e "  ✅ On a valid branch"
 
     check_gh_auth
-    echo -e "  ${GREEN}✓${NC} GitHub authenticated"
+    echo -e "  ✅ GitHub authenticated"
 
     check_remote
-    echo -e "  ${GREEN}✓${NC} Remote 'origin' configured"
+    echo -e "  ✅ Remote 'origin' configured"
 
     # Check for an in-progress merge from a prior sync attempt (before mode detection)
     check_merge_in_progress
@@ -1343,19 +1642,19 @@ main() {
     local mode=""
     if has_uncommitted_changes; then
         mode="full"
-        echo -e "  ${GREEN}✓${NC} Uncommitted changes detected"
+        echo -e "  ✅ Uncommitted changes detected"
     elif has_commits_ahead; then
         mode="pr_only"
-        echo -e "  ${GREEN}✓${NC} Commits ahead of ${BASE_BRANCH} (already committed)"
+        echo -e "  ✅ Commits ahead of ${BASE_BRANCH} (already committed)"
     else
         mode="pr_management"
-        echo -e "  ${GREEN}✓${NC} Clean working tree — entering PR Management Mode"
+        echo -e "  ✅ Clean working tree — entering PR Management Mode"
     fi
 
     # Only enforce non-base-branch for modes that operate on the current branch
     if [ "$mode" != "pr_management" ]; then
         check_not_on_base_branch
-        echo -e "  ${GREEN}✓${NC} Not on base branch"
+        echo -e "  ✅ Not on base branch"
     fi
 
     echo ""
@@ -1388,86 +1687,89 @@ main() {
 
         # Confirm action
         echo ""
-        echo -e "${BLUE}The following actions will be performed:${NC}"
-        echo -e "  1. Stage all changes (git add .)"
-        echo -e "  2. Commit with message: ${CYAN}\"$message_preview\"${NC}"
-        echo -e "  3. Push to origin/${HEAD_BRANCH}"
-        echo -e "  4. Sync with ${BASE_BRANCH} (merge any new changes)"
-        echo -e "  5. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
+        echo -e "📝 ${BLUE}The following actions will be performed:${NC}"
+        echo -e "  1. 📦 Stage all changes (git add .)"
+        echo -e "  2. 💾 Commit with message: ${CYAN}\"$message_preview\"${NC}"
+        echo -e "  3. 🚀 Push to origin/${HEAD_BRANCH}"
+        echo -e "  4. 🔄 Sync with ${BASE_BRANCH} (merge any new changes)"
+        echo -e "  5. 📋 Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
     else
         # PR only mode
-        echo -e "${BLUE}The following actions will be performed:${NC}"
-        echo -e "  1. Push to origin/${HEAD_BRANCH} (if needed)"
-        echo -e "  2. Sync with ${BASE_BRANCH} (merge any new changes)"
-        echo -e "  3. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
+        echo -e "📝 ${BLUE}The following actions will be performed:${NC}"
+        echo -e "  1. 🚀 Push to origin/${HEAD_BRANCH} (if needed)"
+        echo -e "  2. 🔄 Sync with ${BASE_BRANCH} (merge any new changes)"
+        echo -e "  3. 📋 Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
     fi
 
     echo ""
 
-    read -r -p "Proceed? (y/N): " confirm
+    read -r -p "⚠️  Proceed? (y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}Operation cancelled.${NC}"
-        echo -e "${YELLOW}Goodbye!${NC}"
+        echo -e "🚫 ${YELLOW}Operation cancelled.${NC}"
+        echo ""
+        echo "╔══════════════════════════════════════════╗"
+        echo "║        👋 Goodbye! See you later!        ║"
+        echo "╚══════════════════════════════════════════╝"
         exit 0
     fi
 
     echo ""
 
     # Spinner pause
-    echo -e "${BLUE}Preparing to ship...${NC}"
+    echo -e "⚓ ${BLUE}Preparing to ship...${NC}"
     spinner $$ 2
-    echo -e "  ${GREEN}✓${NC} Ready"
+    echo -e "  ✅ Ready"
     echo ""
 
     if [ "$mode" = "full" ]; then
         # Full workflow: stage, commit, push, create PR
-        echo -e "${BLUE}Staging changes...${NC}"
+        echo -e "📦 ${BLUE}Staging changes...${NC}"
         if ! git add .; then
             error_exit "Failed to stage changes."
         fi
-        echo -e "  ${GREEN}✓${NC} Changes staged"
+        echo -e "  ✅ Changes staged"
 
-        echo -e "${BLUE}Committing...${NC}"
+        echo -e "💾 ${BLUE}Committing...${NC}"
         if ! git commit -m "$commit_message"; then
-            echo -e "  ${RED}✗${NC} Commit failed"
-            echo -e "  ${YELLOW}ℹ${NC} Your changes are still staged. To unstage: git reset HEAD"
+            echo -e "  ❌ Commit failed"
+            echo -e "  👉 Your changes are still staged. To unstage: git reset HEAD"
             error_exit "Commit failed. Check your commit message."
         fi
-        echo -e "  ${GREEN}✓${NC} Changes committed"
+        echo -e "  ✅ Changes committed"
 
         # Offer to link commit to existing PR
         link_to_pr "$commit_message" || true
 
-        echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
+        echo -e "🚀 ${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
         local push_output
         if ! push_output=$(git push -u origin "${HEAD_BRANCH}" 2>&1); then
             if echo "$push_output" | grep -q "rejected\|non-fast-forward"; then
-                echo -e "  ${RED}✗${NC} Push rejected - remote has changes you don't have locally"
-                echo -e "  ${YELLOW}ℹ${NC} Try: git pull --rebase origin ${HEAD_BRANCH}"
+                echo -e "  ❌ Push rejected - remote has changes you don't have locally"
+                echo -e "  👉 Try: git pull --rebase origin ${HEAD_BRANCH}"
                 error_exit "Push failed due to remote changes."
             else
-                echo -e "  ${RED}✗${NC} Push failed"
+                echo -e "  ❌ Push failed"
                 echo "$push_output" >&2
                 error_exit "Push failed. Check remote configuration."
             fi
         fi
-        echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
+        echo -e "  ✅ Pushed to origin/${HEAD_BRANCH}"
     else
         # PR only: push if needed, then create PR
-        echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
+        echo -e "🚀 ${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
         local push_output
         if ! push_output=$(git push -u origin "${HEAD_BRANCH}" 2>&1); then
             if echo "$push_output" | grep -q "Everything up-to-date"; then
-                echo -e "  ${YELLOW}ℹ${NC} Already up to date"
+                echo -e "  ℹ️  Already up to date"
             elif echo "$push_output" | grep -q "rejected\|non-fast-forward"; then
-                echo -e "  ${RED}✗${NC} Push rejected - remote has changes you don't have locally"
-                echo -e "  ${YELLOW}ℹ${NC} Try: git pull --rebase origin ${HEAD_BRANCH}"
+                echo -e "  ❌ Push rejected - remote has changes you don't have locally"
+                echo -e "  👉 Try: git pull --rebase origin ${HEAD_BRANCH}"
                 error_exit "Push failed due to remote changes."
             else
-                echo -e "  ${YELLOW}ℹ${NC} Already up to date or pushed"
+                echo -e "  ℹ️  Already up to date or pushed"
             fi
         else
-            echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
+            echo -e "  ✅ Pushed to origin/${HEAD_BRANCH}"
         fi
     fi
 
@@ -1477,7 +1779,7 @@ main() {
     # Offer to link an issue to the PR
     select_issue || true
 
-    echo -e "${BLUE}Creating pull request...${NC}"
+    echo -e "📋 ${BLUE}Creating pull request...${NC}"
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
 
     # Build PR create command with optional issue link
@@ -1514,7 +1816,7 @@ Closes #${SELECTED_ISSUE}"
         # Check if PR already exists
         if gh pr view "${HEAD_BRANCH}" &>/dev/null; then
             echo -e "${YELLOW}─────────────────────────────────────────${NC}"
-            echo -e "  ${YELLOW}ℹ${NC} PR already exists for this branch"
+            echo -e "  ℹ️  PR already exists for this branch"
             gh pr view "${HEAD_BRANCH}" --web 2>/dev/null || true
         else
             error_exit "Failed to create PR. Check the output above for details."
@@ -1526,30 +1828,32 @@ Closes #${SELECTED_ISSUE}"
 
     # Success message
     echo ""
-    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║     ✓ All actions completed!           ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+    echo "╔══════════════════════════════════════════╗"
+    echo "║     🎉 All actions completed!            ║"
+    echo "╚══════════════════════════════════════════╝"
     echo ""
-    echo -e "${CYAN}Summary:${NC}"
+    echo -e "📝 ${CYAN}Summary:${NC}"
     if [ "$mode" = "full" ]; then
-        echo -e "  • Changes staged and committed"
+        echo -e "  • 💾 Changes staged and committed"
     fi
-    echo -e "  • Pushed to origin/${HEAD_BRANCH}"
+    echo -e "  • 🚀 Pushed to origin/${HEAD_BRANCH}"
     if [ "$SYNC_RESULT" = "synced" ]; then
-        echo -e "  • Synced ${HEAD_BRANCH} with ${BASE_BRANCH} (merged new changes)"
+        echo -e "  • 🔄 Synced ${HEAD_BRANCH} with ${BASE_BRANCH} (merged new changes)"
     elif [ "$SYNC_RESULT" = "up_to_date" ]; then
-        echo -e "  • Synced ${HEAD_BRANCH} with ${BASE_BRANCH} (already up to date)"
+        echo -e "  • 🔄 Synced ${HEAD_BRANCH} with ${BASE_BRANCH} (already up to date)"
     fi
-    echo -e "  • Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
+    echo -e "  • 📋 Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
     if [ -n "$SELECTED_ISSUE" ]; then
         if [ -n "$CREATED_ISSUE_FOR_PR" ]; then
-            echo -e "  • Created and linked issue #${SELECTED_ISSUE}: ${CREATED_ISSUE_FOR_PR}"
+            echo -e "  • 🔗 Created and linked issue #${SELECTED_ISSUE}: ${CREATED_ISSUE_FOR_PR}"
         else
-            echo -e "  • Linked to issue #${SELECTED_ISSUE} (closes on merge)"
+            echo -e "  • 🔗 Linked to issue #${SELECTED_ISSUE} (closes on merge)"
         fi
     fi
     echo ""
-    echo -e "${YELLOW}Goodbye!${NC}"
+    echo "╔══════════════════════════════════════════╗"
+    echo "║     👋 Goodbye! Happy coding! 🚀        ║"
+    echo "╚══════════════════════════════════════════╝"
 }
 
 # Source guard: only run main when executed directly (not sourced)
