@@ -608,7 +608,447 @@ reset_dev_environment() {
     echo -e "  ${GREEN}✓${NC} Fresh ${HEAD_BRANCH} created from ${BASE_BRANCH}"
 }
 
-# PR Management Mode:
+# View PR details and comments
+view_pr_details() {
+    local pr_number="$1"
+
+    echo ""
+    echo -e "${BLUE}Fetching PR #${pr_number} details...${NC}"
+    echo -e "${YELLOW}─────────────────────────────────────────${NC}"
+
+    # Fetch PR metadata as JSON
+    local pr_json
+    pr_json=$(gh pr view "$pr_number" --json title,body,state,author,labels,createdAt,headRefName,baseRefName,additions,deletions,changedFiles 2>/dev/null)
+
+    if [ -z "$pr_json" ]; then
+        echo -e "  ${RED}✗${NC} Could not fetch PR details"
+        return 1
+    fi
+
+    # Parse fields
+    local pr_title pr_state pr_author pr_created pr_head pr_base pr_body
+    local pr_additions pr_deletions pr_changed_files pr_labels
+    pr_title=$(echo "$pr_json" | jq -r '.title')
+    pr_state=$(echo "$pr_json" | jq -r '.state')
+    pr_author=$(echo "$pr_json" | jq -r '.author.login')
+    pr_created=$(echo "$pr_json" | jq -r '.createdAt' | cut -d'T' -f1)
+    pr_head=$(echo "$pr_json" | jq -r '.headRefName')
+    pr_base=$(echo "$pr_json" | jq -r '.baseRefName')
+    pr_body=$(echo "$pr_json" | jq -r '.body // "(no description)"')
+    pr_additions=$(echo "$pr_json" | jq -r '.additions')
+    pr_deletions=$(echo "$pr_json" | jq -r '.deletions')
+    pr_changed_files=$(echo "$pr_json" | jq -r '.changedFiles')
+    pr_labels=$(echo "$pr_json" | jq -r '.labels[].name' 2>/dev/null | paste -sd', ' -)
+
+    echo ""
+    echo -e "  ${CYAN}Title:${NC}    ${pr_title}"
+    echo -e "  ${CYAN}State:${NC}    ${pr_state}"
+    echo -e "  ${CYAN}Author:${NC}   ${pr_author}"
+    echo -e "  ${CYAN}Created:${NC}  ${pr_created}"
+    echo -e "  ${CYAN}Branch:${NC}   ${pr_head} → ${pr_base}"
+    echo -e "  ${CYAN}Changes:${NC}  ${GREEN}+${pr_additions}${NC} ${RED}-${pr_deletions}${NC} (${pr_changed_files} files)"
+    if [ -n "$pr_labels" ]; then
+        echo -e "  ${CYAN}Labels:${NC}   ${pr_labels}"
+    fi
+    echo ""
+    echo -e "  ${CYAN}Description:${NC}"
+    echo "$pr_body" | sed 's/^/    /'
+    echo ""
+    echo -e "${YELLOW}─────────────────────────────────────────${NC}"
+
+    # Fetch and display comments
+    echo ""
+    echo -e "${BLUE}Fetching comments...${NC}"
+
+    local comments_json
+    comments_json=$(gh pr view "$pr_number" --json comments --jq '.comments' 2>/dev/null)
+
+    if [ -z "$comments_json" ] || [ "$comments_json" = "[]" ] || [ "$comments_json" = "null" ]; then
+        echo -e "  ${YELLOW}ℹ${NC} No comments on this PR"
+    else
+        local comment_count
+        comment_count=$(echo "$comments_json" | jq 'length')
+        echo -e "  ${GREEN}${comment_count} comment(s)${NC}"
+        echo ""
+
+        # Iterate over each comment
+        local i=0
+        while [ "$i" -lt "$comment_count" ]; do
+            local author body created_at
+            author=$(echo "$comments_json" | jq -r ".[$i].author.login")
+            body=$(echo "$comments_json" | jq -r ".[$i].body")
+            created_at=$(echo "$comments_json" | jq -r ".[$i].createdAt" | cut -d'T' -f1)
+
+            echo -e "  ${CYAN}${author}${NC} (${created_at}):"
+            echo "$body" | sed 's/^/    /'
+            echo ""
+            ((i++))
+        done
+    fi
+
+    # Fetch and display review comments (inline code review comments)
+    local reviews_json
+    reviews_json=$(gh pr view "$pr_number" --json reviews --jq '.reviews' 2>/dev/null)
+
+    if [ -n "$reviews_json" ] && [ "$reviews_json" != "[]" ] && [ "$reviews_json" != "null" ]; then
+        local review_count
+        review_count=$(echo "$reviews_json" | jq '[.[] | select(.body != "")] | length')
+
+        if [ "$review_count" -gt 0 ]; then
+            echo -e "${BLUE}Reviews:${NC}"
+            echo ""
+
+            local j=0
+            local total_reviews
+            total_reviews=$(echo "$reviews_json" | jq 'length')
+            while [ "$j" -lt "$total_reviews" ]; do
+                local rev_author rev_state rev_body rev_date
+                rev_author=$(echo "$reviews_json" | jq -r ".[$j].author.login")
+                rev_state=$(echo "$reviews_json" | jq -r ".[$j].state")
+                rev_body=$(echo "$reviews_json" | jq -r ".[$j].body")
+                rev_date=$(echo "$reviews_json" | jq -r ".[$j].submittedAt" | cut -d'T' -f1)
+
+                # Color-code review state
+                local state_color="$YELLOW"
+                case "$rev_state" in
+                    APPROVED) state_color="$GREEN" ;;
+                    CHANGES_REQUESTED) state_color="$RED" ;;
+                    COMMENTED) state_color="$CYAN" ;;
+                esac
+
+                echo -e "  ${CYAN}${rev_author}${NC} — ${state_color}${rev_state}${NC} (${rev_date})"
+                if [ -n "$rev_body" ] && [ "$rev_body" != "" ]; then
+                    echo "$rev_body" | sed 's/^/    /'
+                fi
+                echo ""
+                ((j++))
+            done
+        fi
+    fi
+
+    echo -e "${YELLOW}─────────────────────────────────────────${NC}"
+    return 0
+}
+
+# Close a PR without merging
+close_pr() {
+    local pr_number="$1"
+    local pr_title="$2"
+
+    echo ""
+    echo -e "${YELLOW}Close PR #${pr_number}: ${pr_title}?${NC}"
+    echo ""
+    echo -e "  ${YELLOW}⚠${NC}  This will close the PR without merging."
+    echo ""
+
+    # Ask whether to also delete the branch
+    local delete_branch="n"
+    read -r -p "Also delete the remote branch? (y/N): " delete_branch
+    echo ""
+
+    read -r -p "Proceed with closing? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Operation cancelled.${NC}"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${BLUE}Closing PR #${pr_number}...${NC}"
+
+    local close_cmd=(gh pr close "$pr_number")
+    if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
+        close_cmd+=(--delete-branch)
+    fi
+
+    local close_output
+    if ! close_output=$("${close_cmd[@]}" 2>&1); then
+        echo -e "  ${RED}✗${NC} Failed to close PR"
+        echo "$close_output" >&2
+        return 1
+    fi
+    echo -e "  ${GREEN}✓${NC} PR #${pr_number} closed"
+
+    if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
+        echo -e "  ${GREEN}✓${NC} Remote branch deleted"
+    fi
+
+    # Clean up local branch if it exists
+    local pr_head_branch
+    pr_head_branch=$(gh pr view "$pr_number" --json headRefName -q '.headRefName' 2>/dev/null)
+
+    if [ -n "$pr_head_branch" ] && git show-ref --verify --quiet "refs/heads/$pr_head_branch"; then
+        echo ""
+        local delete_local
+        read -r -p "Delete local branch '${pr_head_branch}'? (y/N): " delete_local
+        if [[ "$delete_local" =~ ^[Yy]$ ]]; then
+            if ! git branch -d "$pr_head_branch" 2>/dev/null; then
+                echo -e "  ${YELLOW}⚠${NC}  Could not delete local branch '${pr_head_branch}'"
+                echo -e "  ${YELLOW}ℹ${NC} To force delete: git branch -D ${pr_head_branch}"
+            else
+                echo -e "  ${GREEN}✓${NC} Local branch '${pr_head_branch}' deleted"
+            fi
+        fi
+    fi
+
+    # Success
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║     ✓ PR closed!                       ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}Summary:${NC}"
+    echo -e "  • PR #${pr_number} closed: ${pr_title}"
+    if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
+        echo -e "  • Remote branch deleted"
+    fi
+    echo ""
+    return 0
+}
+
+# Squash-merge a PR (extracted from original pr_management_mode)
+squash_merge_pr() {
+    local pr_number="$1"
+    local pr_title="$2"
+
+    echo ""
+    echo -e "${BLUE}The following actions will be performed:${NC}"
+    echo -e "  1. Squash-merge PR #${pr_number}: ${pr_title}"
+    echo -e "  2. Delete remote branch (--delete-branch)"
+    echo -e "  3. Switch to ${BASE_BRANCH} and pull latest"
+    echo -e "  4. Delete local head branch"
+    echo ""
+    echo -e "  ${YELLOW}⚠${NC}  Note: Squash-merge does not record merge history."
+    echo -e "       If you keep the branch and merge again, duplicate conflicts may arise."
+    echo ""
+
+    read -r -p "Proceed? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Operation cancelled.${NC}"
+        return 0
+    fi
+
+    echo ""
+
+    # Resolve the PR's head branch name before merging (for local cleanup)
+    local pr_head_branch
+    pr_head_branch=$(gh pr view "$pr_number" --json headRefName -q '.headRefName' 2>/dev/null)
+
+    # Squash-merge the PR (also deletes the remote branch)
+    echo -e "${BLUE}Squash-merging PR #${pr_number}...${NC}"
+    local merge_output
+    if ! merge_output=$(gh pr merge "$pr_number" --squash --delete-branch 2>&1); then
+        if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+            echo -e "  ${RED}✗${NC} Merge conflict detected — resolve manually and retry"
+        else
+            echo -e "  ${RED}✗${NC} Merge failed"
+            echo "$merge_output" >&2
+        fi
+        error_exit "Failed to merge PR #${pr_number}."
+    fi
+    echo -e "  ${GREEN}✓${NC} PR #${pr_number} squash-merged and remote branch deleted"
+
+    # Switch to base branch and pull latest
+    echo -e "${BLUE}Switching to ${BASE_BRANCH} and pulling...${NC}"
+    if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
+        echo -e "  ${YELLOW}⚠${NC}  Could not switch to ${BASE_BRANCH} automatically"
+    else
+        if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
+            echo -e "  ${YELLOW}⚠${NC}  Could not pull latest ${BASE_BRANCH}"
+        else
+            echo -e "  ${GREEN}✓${NC} Switched to ${BASE_BRANCH} and pulled latest"
+        fi
+    fi
+
+    # Delete local head branch if it still exists
+    local branch_deleted=false
+    if [ -n "$pr_head_branch" ] && git show-ref --verify --quiet "refs/heads/$pr_head_branch"; then
+        echo -e "${BLUE}Deleting local branch '${pr_head_branch}'...${NC}"
+        if ! git branch -d "$pr_head_branch" 2>/dev/null; then
+            echo -e "  ${YELLOW}⚠${NC}  Could not delete local branch '${pr_head_branch}'"
+            echo -e "  ${YELLOW}ℹ${NC} To force delete: git branch -D ${pr_head_branch}"
+        else
+            echo -e "  ${GREEN}✓${NC} Local branch '${pr_head_branch}' deleted"
+            branch_deleted=true
+        fi
+    fi
+
+    # Reset dev environment after successful merge
+    reset_dev_environment
+
+    # Success message
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║     ✓ All actions completed!           ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}Summary:${NC}"
+    echo -e "  • PR #${pr_number} squash-merged: ${pr_title}"
+    echo -e "  • Remote branch deleted"
+    if [ "$branch_deleted" = true ]; then
+        echo -e "  • Local branch '${pr_head_branch}' cleaned up"
+    fi
+    echo -e "  • ${BASE_BRANCH} updated with latest changes"
+    echo ""
+    return 0
+}
+
+# View and manage issues linked to a PR
+view_linked_issues() {
+    local pr_number="$1"
+
+    echo ""
+    echo -e "${BLUE}Fetching linked issues for PR #${pr_number}...${NC}"
+
+    # Fetch PR body to parse for issue references
+    local pr_body
+    pr_body=$(gh pr view "$pr_number" --json body -q '.body' 2>/dev/null)
+
+    # Parse for issue references: Closes #N, Fixes #N, Resolves #N, Part of #N
+    local issue_refs=()
+    if [ -n "$pr_body" ]; then
+        while IFS= read -r ref; do
+            # Avoid duplicates
+            local already_found=false
+            for existing in "${issue_refs[@]}"; do
+                if [ "$existing" = "$ref" ]; then
+                    already_found=true
+                    break
+                fi
+            done
+            if [ "$already_found" = false ]; then
+                issue_refs+=("$ref")
+            fi
+        done < <(echo "$pr_body" | grep -oiE '(closes|fixes|resolves|part of)\s+#[0-9]+' | grep -oE '[0-9]+')
+    fi
+
+    if [ ${#issue_refs[@]} -eq 0 ]; then
+        echo -e "  ${YELLOW}ℹ${NC} No linked issues found in PR body"
+        echo ""
+        echo -e "  ${CYAN}Tip:${NC} Issues are detected from the PR description using keywords like:"
+        echo -e "       ${CYAN}Closes #N${NC}, ${CYAN}Fixes #N${NC}, ${CYAN}Resolves #N${NC}, ${CYAN}Part of #N${NC}"
+        return 0
+    fi
+
+    echo -e "  ${GREEN}✓${NC} Found ${#issue_refs[@]} linked issue(s)"
+    echo ""
+
+    # Fetch details for each linked issue
+    local issue_numbers=()
+    local issue_titles=()
+    local issue_states=()
+    for ref in "${issue_refs[@]}"; do
+        local issue_json
+        issue_json=$(gh issue view "$ref" --json number,title,state 2>/dev/null)
+        if [ -n "$issue_json" ]; then
+            local i_number i_title i_state
+            i_number=$(echo "$issue_json" | jq -r '.number')
+            i_title=$(echo "$issue_json" | jq -r '.title')
+            i_state=$(echo "$issue_json" | jq -r '.state')
+            issue_numbers+=("$i_number")
+            issue_titles+=("$i_title")
+            issue_states+=("$i_state")
+        fi
+    done
+
+    if [ ${#issue_numbers[@]} -eq 0 ]; then
+        echo -e "  ${YELLOW}ℹ${NC} Could not fetch details for linked issues"
+        return 0
+    fi
+
+    # Display linked issues with state
+    echo -e "${YELLOW}Linked issues:${NC}"
+    echo ""
+    for i in "${!issue_numbers[@]}"; do
+        local state_color="$GREEN"
+        if [ "${issue_states[$i]}" = "CLOSED" ]; then
+            state_color="$RED"
+        fi
+        printf "  ${CYAN}%2d)${NC} #%-4s [${state_color}%s${NC}] %s\n" "$((i + 1))" "${issue_numbers[$i]}" "${issue_states[$i]}" "${issue_titles[$i]}"
+    done
+    echo ""
+
+    # Check if there are any open issues to close
+    local has_open=false
+    for state in "${issue_states[@]}"; do
+        if [ "$state" = "OPEN" ]; then
+            has_open=true
+            break
+        fi
+    done
+
+    if [ "$has_open" = false ]; then
+        echo -e "  ${YELLOW}ℹ${NC} All linked issues are already closed"
+        return 0
+    fi
+
+    # Offer to close open issues
+    echo -e "${YELLOW}Close an issue?${NC}"
+    echo ""
+    local open_indices=()
+    for i in "${!issue_numbers[@]}"; do
+        if [ "${issue_states[$i]}" = "OPEN" ]; then
+            open_indices+=("$i")
+            printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "${issue_numbers[$i]}" "${issue_numbers[$i]}" "${issue_titles[$i]}"
+        fi
+    done
+    echo ""
+    echo -e "  ${CYAN} a)${NC} Close all open issues"
+    echo -e "  ${CYAN} 0)${NC} Skip"
+    echo ""
+
+    local selection
+    while true; do
+        read -r -p "Enter issue # to close, 'a' for all, or 0 to skip: " selection
+
+        if [ "$selection" = "0" ]; then
+            echo -e "  ${YELLOW}ℹ${NC} Skipping"
+            return 0
+        fi
+
+        if [ "$selection" = "a" ] || [ "$selection" = "A" ]; then
+            # Close all open issues
+            echo ""
+            for idx in "${open_indices[@]}"; do
+                local inum="${issue_numbers[$idx]}"
+                local ititle="${issue_titles[$idx]}"
+                echo -e "${BLUE}Closing issue #${inum}...${NC}"
+                if gh issue close "$inum" &>/dev/null; then
+                    echo -e "  ${GREEN}✓${NC} Issue #${inum} closed: ${ititle}"
+                else
+                    echo -e "  ${RED}✗${NC} Failed to close issue #${inum}"
+                fi
+            done
+            echo ""
+            return 0
+        fi
+
+        # Check if selection is a valid open issue number
+        if [[ "$selection" =~ ^[0-9]+$ ]]; then
+            local valid=false
+            for idx in "${open_indices[@]}"; do
+                if [ "${issue_numbers[$idx]}" = "$selection" ]; then
+                    valid=true
+                    echo ""
+                    echo -e "${BLUE}Closing issue #${selection}...${NC}"
+                    if gh issue close "$selection" &>/dev/null; then
+                        echo -e "  ${GREEN}✓${NC} Issue #${selection} closed: ${issue_titles[$idx]}"
+                    else
+                        echo -e "  ${RED}✗${NC} Failed to close issue #${selection}"
+                    fi
+                    echo ""
+                    return 0
+                fi
+            done
+            if [ "$valid" = false ]; then
+                echo -e "${RED}Not a valid open issue number. Try again.${NC}"
+            fi
+        else
+            echo -e "${RED}Invalid input. Enter an issue #, 'a', or 0.${NC}"
+        fi
+    done
+}
+
+# PR Management Mode: select a PR and choose an action
 pr_management_mode() {
     echo ""
     echo -e "${BLUE}Fetching open pull requests...${NC}"
@@ -637,7 +1077,7 @@ pr_management_mode() {
     local pr_count=${#pr_numbers[@]}
 
     echo ""
-    echo -e "${YELLOW}Select a pull request to squash-merge:${NC}"
+    echo -e "${YELLOW}Select a pull request:${NC}"
     echo ""
 
     for i in "${!pr_numbers[@]}"; do
@@ -666,84 +1106,47 @@ pr_management_mode() {
     local selected_pr=${pr_numbers[$((selection - 1))]}
     local selected_title=${pr_titles[$((selection - 1))]}
 
-    echo ""
-    echo -e "${BLUE}The following actions will be performed:${NC}"
-    echo -e "  1. Squash-merge PR #${selected_pr}: ${selected_title}"
-    echo -e "  2. Delete remote branch (--delete-branch)"
-    echo -e "  3. Switch to ${BASE_BRANCH} and pull latest"
-    echo -e "  4. Delete local head branch"
-    echo ""
-    echo -e "  ${YELLOW}⚠${NC}  Note: Squash-merge does not record merge history."
-    echo -e "       If you keep the branch and merge again, duplicate conflicts may arise."
-    echo ""
+    # Action menu loop for the selected PR
+    while true; do
+        echo ""
+        echo -e "${CYAN}PR #${selected_pr}: ${selected_title}${NC}"
+        echo ""
+        echo -e "${YELLOW}What would you like to do?${NC}"
+        echo ""
+        echo -e "  ${CYAN}1)${NC} View details & comments"
+        echo -e "  ${CYAN}2)${NC} Close PR"
+        echo -e "  ${CYAN}3)${NC} Squash-merge PR"
+        echo -e "  ${CYAN}4)${NC} View/close linked issues"
+        echo -e "  ${CYAN}x)${NC} Back"
+        echo ""
 
-    read -r -p "Proceed? (y/N): " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}Operation cancelled.${NC}"
-        echo -e "${YELLOW}Goodbye!${NC}"
-        exit 0
-    fi
+        local action
+        read -r -p "Choose action [1-4/x]: " action
 
-    echo ""
-
-    # Resolve the PR's head branch name before merging (for local cleanup)
-    local pr_head_branch
-    pr_head_branch=$(gh pr view "$selected_pr" --json headRefName -q '.headRefName' 2>/dev/null)
-
-    # Squash-merge the PR (also deletes the remote branch)
-    echo -e "${BLUE}Squash-merging PR #${selected_pr}...${NC}"
-    local merge_output
-    if ! merge_output=$(gh pr merge "$selected_pr" --squash --delete-branch 2>&1); then
-        if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
-            echo -e "  ${RED}✗${NC} Merge conflict detected — resolve manually and retry"
-        else
-            echo -e "  ${RED}✗${NC} Merge failed"
-            echo "$merge_output" >&2
-        fi
-        error_exit "Failed to merge PR #${selected_pr}."
-    fi
-    echo -e "  ${GREEN}✓${NC} PR #${selected_pr} squash-merged and remote branch deleted"
-
-    # Switch to base branch and pull latest
-    echo -e "${BLUE}Switching to ${BASE_BRANCH} and pulling...${NC}"
-    if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
-        echo -e "  ${YELLOW}⚠${NC}  Could not switch to ${BASE_BRANCH} automatically"
-    else
-        if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
-            echo -e "  ${YELLOW}⚠${NC}  Could not pull latest ${BASE_BRANCH}"
-        else
-            echo -e "  ${GREEN}✓${NC} Switched to ${BASE_BRANCH} and pulled latest"
-        fi
-    fi
-
-    # Delete local head branch if it still exists
-    local branch_deleted=false
-    if [ -n "$pr_head_branch" ] && git show-ref --verify --quiet "refs/heads/$pr_head_branch"; then
-        echo -e "${BLUE}Deleting local branch '${pr_head_branch}'...${NC}"
-        if ! git branch -d "$pr_head_branch" 2>/dev/null; then
-            echo -e "  ${YELLOW}⚠${NC}  Could not delete local branch '${pr_head_branch}'"
-            echo -e "  ${YELLOW}ℹ${NC} To force delete: git branch -D ${pr_head_branch}"
-        else
-            echo -e "  ${GREEN}✓${NC} Local branch '${pr_head_branch}' deleted"
-            branch_deleted=true
-        fi
-    fi
-
-    # Success message
-    echo ""
-    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║     ✓ All actions completed!           ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e "${CYAN}Summary:${NC}"
-    echo -e "  • PR #${selected_pr} squash-merged: ${selected_title}"
-    echo -e "  • Remote branch deleted"
-    if [ "$branch_deleted" = true ]; then
-        echo -e "  • Local branch '${pr_head_branch}' cleaned up"
-    fi
-    echo -e "  • ${BASE_BRANCH} updated with latest changes"
-    echo ""
-    echo -e "${YELLOW}Goodbye!${NC}"
+        case "$action" in
+            1)
+                view_pr_details "$selected_pr"
+                ;;
+            2)
+                close_pr "$selected_pr" "$selected_title"
+                return
+                ;;
+            3)
+                squash_merge_pr "$selected_pr" "$selected_title"
+                return
+                ;;
+            4)
+                view_linked_issues "$selected_pr"
+                ;;
+            x|X)
+                echo -e "${YELLOW}Goodbye!${NC}"
+                return
+                ;;
+            *)
+                echo -e "${RED}Invalid choice. Enter 1-4 or x.${NC}"
+                ;;
+        esac
+    done
 }
 
 # Prompt to create a standalone GitHub issue before the main workflow
@@ -958,7 +1361,6 @@ main() {
     echo ""
 
     if [ "$mode" = "pr_management" ]; then
-        reset_dev_environment
         pr_management_mode
         return
     fi

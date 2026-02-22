@@ -1165,7 +1165,7 @@ EOF
 }
 
 # =============================================================================
-# Test 14: pr_management_mode() function
+# Test 14: pr_management_mode() and PR action functions
 # =============================================================================
 
 @test "pr_management_mode function exists in script" {
@@ -1176,7 +1176,6 @@ EOF
 @test "pr_management_mode is dispatched from main" {
     run grep 'pr_management_mode' "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
-    # Should be called in the mode dispatch guard
     [[ "$output" == *'pr_management_mode'* ]]
 }
 
@@ -1305,18 +1304,68 @@ EOF
     [[ "$output" == *"INVALID=abc"* ]]
 }
 
-@test "pr_management_mode shows confirmation with 4 actions" {
-    run bash -c "grep -A4 'Squash-merge PR' '$SCRIPT_DIR/git-shipyard.sh' | grep -c -E 'Squash-merge|Delete remote|Switch to|Delete local'"
+@test "pr_management_mode shows action menu with 4 options" {
+    run grep "View details & comments" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
-    [ "$output" -eq 4 ]
+    run grep "Close PR" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    run grep "Squash-merge PR" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    run grep "View/close linked issues" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
 }
 
-@test "pr_management_mode uses --squash --delete-branch for merge" {
+@test "pr_management_mode action menu validates input" {
+    cat > "$TEST_DIR/test_pr_mgmt_action_validate.sh" << 'EOF'
+#!/usr/bin/env bash
+RED='\033[0;31m'
+NC='\033[0m'
+
+validate_action() {
+    local action="$1"
+    case "$action" in
+        1|2|3|4) echo "VALID=$action" ;;
+        x|X) echo "BACK" ;;
+        *) echo "INVALID=$action" ;;
+    esac
+}
+
+validate_action 1
+validate_action 2
+validate_action 3
+validate_action 4
+validate_action x
+validate_action X
+validate_action 5
+validate_action "abc"
+EOF
+    chmod +x "$TEST_DIR/test_pr_mgmt_action_validate.sh"
+
+    run "$TEST_DIR/test_pr_mgmt_action_validate.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"VALID=1"* ]]
+    [[ "$output" == *"VALID=2"* ]]
+    [[ "$output" == *"VALID=3"* ]]
+    [[ "$output" == *"VALID=4"* ]]
+    [[ "$output" == *"BACK"* ]]
+    [[ "$output" == *"INVALID=5"* ]]
+    [[ "$output" == *"INVALID=abc"* ]]
+}
+
+@test "pr_management_mode PR select prompt says Select a pull request" {
+    run grep "Select a pull request:" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    # Should NOT say "to squash-merge" anymore
+    run grep "Select a pull request to squash-merge" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -ne 0 ]
+}
+
+@test "squash_merge_pr uses --squash --delete-branch for merge" {
     run grep "gh pr merge.*--squash --delete-branch" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
 
-@test "pr_management_mode detects merge conflicts" {
+@test "squash_merge_pr detects merge conflicts" {
     cat > "$TEST_DIR/test_pr_mgmt_conflict.sh" << 'EOF'
 #!/usr/bin/env bash
 RED='\033[0;31m'
@@ -1336,7 +1385,7 @@ EOF
     [[ "$output" == *"CONFLICT_DETECTED"* ]]
 }
 
-@test "pr_management_mode handles generic merge failure" {
+@test "squash_merge_pr handles generic merge failure" {
     cat > "$TEST_DIR/test_pr_mgmt_merge_fail.sh" << 'EOF'
 #!/usr/bin/env bash
 RED='\033[0;31m'
@@ -1358,20 +1407,26 @@ EOF
     [[ "$output" == *"GENERIC_FAILURE"* ]]
 }
 
-@test "pr_management_mode successful merge shows summary with branch cleaned up" {
+@test "squash_merge_pr shows confirmation with 4 actions" {
+    run bash -c "sed -n '/^squash_merge_pr()/,/^}/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c -E '^\s+echo.*[1-4]\.\s+(Squash-merge|Delete remote|Switch to|Delete local)'"
+    [ "$status" -eq 0 ]
+    [ "$output" -eq 4 ]
+}
+
+@test "squash_merge_pr successful merge shows summary with branch cleaned up" {
     cat > "$TEST_DIR/test_pr_mgmt_summary.sh" << 'EOF'
 #!/usr/bin/env bash
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 BASE_BRANCH="main"
-selected_pr="7"
-selected_title="Add login feature"
+pr_number="7"
+pr_title="Add login feature"
 pr_head_branch="feature-login"
 branch_deleted=true
 
 echo -e "${CYAN}Summary:${NC}"
-echo -e "  • PR #${selected_pr} squash-merged: ${selected_title}"
+echo -e "  • PR #${pr_number} squash-merged: ${pr_title}"
 echo -e "  • Remote branch deleted"
 if [ "$branch_deleted" = true ]; then
     echo -e "  • Local branch '${pr_head_branch}' cleaned up"
@@ -1388,19 +1443,19 @@ EOF
     [[ "$output" == *"main updated with latest changes"* ]]
 }
 
-@test "pr_management_mode summary omits branch line when deletion failed" {
+@test "squash_merge_pr summary omits branch line when deletion failed" {
     cat > "$TEST_DIR/test_pr_mgmt_summary_no_branch.sh" << 'EOF'
 #!/usr/bin/env bash
 CYAN='\033[0;36m'
 NC='\033[0m'
 BASE_BRANCH="main"
-selected_pr="7"
-selected_title="Add login feature"
+pr_number="7"
+pr_title="Add login feature"
 pr_head_branch="feature-login"
 branch_deleted=false
 
 echo -e "${CYAN}Summary:${NC}"
-echo -e "  • PR #${selected_pr} squash-merged: ${selected_title}"
+echo -e "  • PR #${pr_number} squash-merged: ${pr_title}"
 echo -e "  • Remote branch deleted"
 if [ "$branch_deleted" = true ]; then
     echo -e "  • Local branch '${pr_head_branch}' cleaned up"
@@ -1415,39 +1470,758 @@ EOF
     [[ "$output" != *"cleaned up"* ]]
 }
 
+@test "squash_merge_pr calls reset_dev_environment" {
+    # Verify reset_dev_environment is called inside squash_merge_pr
+    run bash -c "sed -n '/^squash_merge_pr()/,/^}/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'reset_dev_environment'"
+    [ "$output" -ge 1 ]
+}
+
+@test "reset_dev_environment is NOT called before pr_management_mode in main" {
+    # Verify reset_dev_environment is NOT called right before pr_management_mode in main
+    run bash -c "grep -B1 'pr_management_mode' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'reset_dev_environment'"
+    [ "$output" -eq 0 ]
+}
+
 @test "pr_management_mode skips base branch check" {
-    # The check_not_on_base_branch guard should only apply to full/pr_only modes
     run grep -B2 'check_not_on_base_branch' "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
-    # Verify the check is gated behind a mode != pr_management condition
     [[ "$output" == *"pr_management"* ]]
 }
 
-@test "pr_management_mode uses safe branch delete with -D hint" {
+@test "squash_merge_pr uses safe branch delete with -D hint" {
     run grep "git branch -d" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
     run grep "git branch -D" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
 
-@test "pr_management_mode resolves head branch before merge" {
+@test "squash_merge_pr resolves head branch before merge" {
     run grep "gh pr view.*headRefName" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
 
-@test "pr_management_mode checks branch exists before deleting" {
+@test "squash_merge_pr checks branch exists before deleting" {
     run grep "git show-ref --verify --quiet" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
 
-@test "pr_management_mode uses branch_deleted flag for summary" {
-    # Verify the script uses a flag to track deletion success
+@test "squash_merge_pr uses branch_deleted flag for summary" {
     run grep "branch_deleted=true" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
     run grep "branch_deleted=false" "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
     run grep 'branch_deleted.*=.*true' "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
+}
+
+# =============================================================================
+# Test 14b: view_pr_details() function
+# =============================================================================
+
+@test "view_pr_details function exists in script" {
+    run grep "view_pr_details()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "view_pr_details displays PR metadata fields" {
+    cat > "$TEST_DIR/test_view_pr_details.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Simulate parsed PR metadata display
+pr_title="Add dark mode"
+pr_state="OPEN"
+pr_author="octocat"
+pr_created="2025-01-15"
+pr_head="feature-dark"
+pr_base="main"
+pr_additions="42"
+pr_deletions="10"
+pr_changed_files="5"
+pr_labels="enhancement"
+pr_body="Adds dark mode support for the UI"
+
+echo -e "  ${CYAN}Title:${NC}    ${pr_title}"
+echo -e "  ${CYAN}State:${NC}    ${pr_state}"
+echo -e "  ${CYAN}Author:${NC}   ${pr_author}"
+echo -e "  ${CYAN}Created:${NC}  ${pr_created}"
+echo -e "  ${CYAN}Branch:${NC}   ${pr_head} → ${pr_base}"
+echo -e "  ${CYAN}Changes:${NC}  ${GREEN}+${pr_additions}${NC} ${RED}-${pr_deletions}${NC} (${pr_changed_files} files)"
+if [ -n "$pr_labels" ]; then
+    echo -e "  ${CYAN}Labels:${NC}   ${pr_labels}"
+fi
+echo ""
+echo -e "  ${CYAN}Description:${NC}"
+echo "$pr_body" | sed 's/^/    /'
+EOF
+    chmod +x "$TEST_DIR/test_view_pr_details.sh"
+
+    run "$TEST_DIR/test_view_pr_details.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Add dark mode"* ]]
+    [[ "$output" == *"OPEN"* ]]
+    [[ "$output" == *"octocat"* ]]
+    [[ "$output" == *"2025-01-15"* ]]
+    [[ "$output" == *"feature-dark"* ]]
+    [[ "$output" == *"+42"* ]]
+    [[ "$output" == *"-10"* ]]
+    [[ "$output" == *"5 files"* ]]
+    [[ "$output" == *"enhancement"* ]]
+    [[ "$output" == *"Adds dark mode support"* ]]
+}
+
+@test "view_pr_details shows no comments message when empty" {
+    cat > "$TEST_DIR/test_view_pr_no_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+comments_json="[]"
+
+if [ -z "$comments_json" ] || [ "$comments_json" = "[]" ] || [ "$comments_json" = "null" ]; then
+    echo -e "  ${YELLOW}ℹ${NC} No comments on this PR"
+    echo "NO_COMMENTS"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_view_pr_no_comments.sh"
+
+    run "$TEST_DIR/test_view_pr_no_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No comments on this PR"* ]]
+    [[ "$output" == *"NO_COMMENTS"* ]]
+}
+
+@test "view_pr_details displays comments with author and date" {
+    cat > "$TEST_DIR/test_view_pr_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Simulate comment display logic
+comments_json='[{"author":{"login":"alice"},"body":"Looks good!","createdAt":"2025-01-20T10:30:00Z"},{"author":{"login":"bob"},"body":"Please fix the typo","createdAt":"2025-01-21T14:00:00Z"}]'
+
+comment_count=$(echo "$comments_json" | jq 'length')
+echo -e "  ${GREEN}${comment_count} comment(s)${NC}"
+echo ""
+
+i=0
+while [ "$i" -lt "$comment_count" ]; do
+    author=$(echo "$comments_json" | jq -r ".[$i].author.login")
+    body=$(echo "$comments_json" | jq -r ".[$i].body")
+    created_at=$(echo "$comments_json" | jq -r ".[$i].createdAt" | cut -d'T' -f1)
+
+    echo -e "  ${CYAN}${author}${NC} (${created_at}):"
+    echo "$body" | sed 's/^/    /'
+    echo ""
+    ((i++))
+done
+EOF
+    chmod +x "$TEST_DIR/test_view_pr_comments.sh"
+
+    run "$TEST_DIR/test_view_pr_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 comment(s)"* ]]
+    [[ "$output" == *"alice"* ]]
+    [[ "$output" == *"2025-01-20"* ]]
+    [[ "$output" == *"Looks good!"* ]]
+    [[ "$output" == *"bob"* ]]
+    [[ "$output" == *"2025-01-21"* ]]
+    [[ "$output" == *"Please fix the typo"* ]]
+}
+
+@test "view_pr_details color-codes review states" {
+    cat > "$TEST_DIR/test_view_pr_review_colors.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Test the color-coding logic
+for state in APPROVED CHANGES_REQUESTED COMMENTED PENDING; do
+    state_color="$YELLOW"
+    case "$state" in
+        APPROVED) state_color="$GREEN" ;;
+        CHANGES_REQUESTED) state_color="$RED" ;;
+        COMMENTED) state_color="$CYAN" ;;
+    esac
+    echo -e "STATE=${state_color}${state}${NC}"
+done
+EOF
+    chmod +x "$TEST_DIR/test_view_pr_review_colors.sh"
+
+    run "$TEST_DIR/test_view_pr_review_colors.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"APPROVED"* ]]
+    [[ "$output" == *"CHANGES_REQUESTED"* ]]
+    [[ "$output" == *"COMMENTED"* ]]
+    [[ "$output" == *"PENDING"* ]]
+}
+
+@test "view_pr_details is called from action menu option 1" {
+    run bash -c "sed -n '/Action menu loop/,/done/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'view_pr_details'"
+    [ "$output" -ge 1 ]
+}
+
+# =============================================================================
+# Test 14c: close_pr() function
+# =============================================================================
+
+@test "close_pr function exists in script" {
+    run grep "close_pr()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "close_pr cancels when user declines" {
+    cat > "$TEST_DIR/test_close_pr_cancel.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+confirm="n"
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "${YELLOW}Operation cancelled.${NC}"
+    echo "CANCELLED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_close_pr_cancel.sh"
+
+    run "$TEST_DIR/test_close_pr_cancel.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Operation cancelled."* ]]
+    [[ "$output" == *"CANCELLED"* ]]
+}
+
+@test "close_pr closes PR successfully (mocked)" {
+    cat > "$TEST_DIR/test_close_pr_success.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh
+gh() {
+    if [ "$1" = "pr" ] && [ "$2" = "close" ]; then
+        echo "Closed PR"
+        return 0
+    fi
+    return 0
+}
+
+pr_number="42"
+pr_title="Add feature"
+
+echo -e "${BLUE}Closing PR #${pr_number}...${NC}"
+
+close_cmd=(gh pr close "$pr_number")
+close_output=$("${close_cmd[@]}" 2>&1)
+status=$?
+
+if [ $status -eq 0 ]; then
+    echo -e "  ${GREEN}✓${NC} PR #${pr_number} closed"
+    echo "CLOSE_SUCCESS"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_close_pr_success.sh"
+
+    run "$TEST_DIR/test_close_pr_success.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR #42 closed"* ]]
+    [[ "$output" == *"CLOSE_SUCCESS"* ]]
+}
+
+@test "close_pr handles gh failure" {
+    cat > "$TEST_DIR/test_close_pr_fail.sh" << 'EOF'
+#!/usr/bin/env bash
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh to fail
+gh() {
+    echo "GraphQL: Not found" >&2
+    return 1
+}
+
+pr_number="99"
+
+echo -e "${BLUE}Closing PR #${pr_number}...${NC}"
+if ! close_output=$(gh pr close "$pr_number" 2>&1); then
+    echo -e "  ${RED}✗${NC} Failed to close PR"
+    echo "CLOSE_FAILED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_close_pr_fail.sh"
+
+    run "$TEST_DIR/test_close_pr_fail.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Failed to close PR"* ]]
+    [[ "$output" == *"CLOSE_FAILED"* ]]
+}
+
+@test "close_pr adds --delete-branch when user requests" {
+    cat > "$TEST_DIR/test_close_pr_delete_branch.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+delete_branch="y"
+
+close_cmd=(gh pr close "42")
+if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
+    close_cmd+=(--delete-branch)
+fi
+
+# Output the command to verify --delete-branch was added
+echo "CMD=${close_cmd[*]}"
+
+if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
+    echo -e "  ${GREEN}✓${NC} Remote branch deleted"
+    echo "BRANCH_DELETED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_close_pr_delete_branch.sh"
+
+    run "$TEST_DIR/test_close_pr_delete_branch.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--delete-branch"* ]]
+    [[ "$output" == *"BRANCH_DELETED"* ]]
+}
+
+@test "close_pr shows summary on success" {
+    cat > "$TEST_DIR/test_close_pr_summary.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+pr_number="42"
+pr_title="Add dark mode"
+delete_branch="y"
+
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║     ✓ PR closed!                       ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${CYAN}Summary:${NC}"
+echo -e "  • PR #${pr_number} closed: ${pr_title}"
+if [[ "$delete_branch" =~ ^[Yy]$ ]]; then
+    echo -e "  • Remote branch deleted"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_close_pr_summary.sh"
+
+    run "$TEST_DIR/test_close_pr_summary.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR closed!"* ]]
+    [[ "$output" == *"PR #42 closed: Add dark mode"* ]]
+    [[ "$output" == *"Remote branch deleted"* ]]
+}
+
+@test "close_pr is called from action menu option 2" {
+    run bash -c "sed -n '/Action menu loop/,/done/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'close_pr'"
+    [ "$output" -ge 1 ]
+}
+
+# =============================================================================
+# Test 14d: squash_merge_pr() function
+# =============================================================================
+
+@test "squash_merge_pr function exists in script" {
+    run grep "squash_merge_pr()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "squash_merge_pr is called from action menu option 3" {
+    run bash -c "sed -n '/Action menu loop/,/done/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'squash_merge_pr'"
+    [ "$output" -ge 1 ]
+}
+
+@test "squash_merge_pr contains squash-merge warning" {
+    run grep "Squash-merge does not record merge history" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "squash_merge_pr contains duplicate conflicts warning" {
+    run grep "duplicate conflicts" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+# =============================================================================
+# Test 14e: view_linked_issues() function
+# =============================================================================
+
+@test "view_linked_issues function exists in script" {
+    run grep "view_linked_issues()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "view_linked_issues is called from action menu option 4" {
+    run bash -c "sed -n '/Action menu loop/,/done/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'view_linked_issues'"
+    [ "$output" -ge 1 ]
+}
+
+@test "view_linked_issues parses Closes, Fixes, Resolves, Part of keywords" {
+    cat > "$TEST_DIR/test_linked_issues_parse.sh" << 'EOF'
+#!/usr/bin/env bash
+
+# Test the regex parsing from view_linked_issues
+pr_body="This PR adds authentication.
+
+Closes #10
+Fixes #25
+Resolves #30
+Part of #42"
+
+issue_refs=()
+while IFS= read -r ref; do
+    already_found=false
+    for existing in "${issue_refs[@]}"; do
+        if [ "$existing" = "$ref" ]; then
+            already_found=true
+            break
+        fi
+    done
+    if [ "$already_found" = false ]; then
+        issue_refs+=("$ref")
+    fi
+done < <(echo "$pr_body" | grep -oiE '(closes|fixes|resolves|part of)\s+#[0-9]+' | grep -oE '[0-9]+')
+
+echo "COUNT=${#issue_refs[@]}"
+for ref in "${issue_refs[@]}"; do
+    echo "ISSUE=$ref"
+done
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_parse.sh"
+
+    run "$TEST_DIR/test_linked_issues_parse.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COUNT=4"* ]]
+    [[ "$output" == *"ISSUE=10"* ]]
+    [[ "$output" == *"ISSUE=25"* ]]
+    [[ "$output" == *"ISSUE=30"* ]]
+    [[ "$output" == *"ISSUE=42"* ]]
+}
+
+@test "view_linked_issues deduplicates issue references" {
+    cat > "$TEST_DIR/test_linked_issues_dedup.sh" << 'EOF'
+#!/usr/bin/env bash
+
+pr_body="Closes #10
+Fixes #10
+Resolves #25"
+
+issue_refs=()
+while IFS= read -r ref; do
+    already_found=false
+    for existing in "${issue_refs[@]}"; do
+        if [ "$existing" = "$ref" ]; then
+            already_found=true
+            break
+        fi
+    done
+    if [ "$already_found" = false ]; then
+        issue_refs+=("$ref")
+    fi
+done < <(echo "$pr_body" | grep -oiE '(closes|fixes|resolves|part of)\s+#[0-9]+' | grep -oE '[0-9]+')
+
+echo "COUNT=${#issue_refs[@]}"
+for ref in "${issue_refs[@]}"; do
+    echo "ISSUE=$ref"
+done
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_dedup.sh"
+
+    run "$TEST_DIR/test_linked_issues_dedup.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COUNT=2"* ]]
+    [[ "$output" == *"ISSUE=10"* ]]
+    [[ "$output" == *"ISSUE=25"* ]]
+}
+
+@test "view_linked_issues shows tip when no issues found" {
+    cat > "$TEST_DIR/test_linked_issues_none.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+issue_refs=()
+
+if [ ${#issue_refs[@]} -eq 0 ]; then
+    echo -e "  ${YELLOW}ℹ${NC} No linked issues found in PR body"
+    echo ""
+    echo -e "  ${CYAN}Tip:${NC} Issues are detected from the PR description using keywords like:"
+    echo -e "       ${CYAN}Closes #N${NC}, ${CYAN}Fixes #N${NC}, ${CYAN}Resolves #N${NC}, ${CYAN}Part of #N${NC}"
+    echo "NO_ISSUES_TIP"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_none.sh"
+
+    run "$TEST_DIR/test_linked_issues_none.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No linked issues found in PR body"* ]]
+    [[ "$output" == *"Closes #N"* ]]
+    [[ "$output" == *"NO_ISSUES_TIP"* ]]
+}
+
+@test "view_linked_issues displays issues with state" {
+    cat > "$TEST_DIR/test_linked_issues_display.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+issue_numbers=("10" "25")
+issue_titles=("Login bug" "Dark mode")
+issue_states=("OPEN" "CLOSED")
+
+echo -e "${YELLOW}Linked issues:${NC}"
+echo ""
+for i in "${!issue_numbers[@]}"; do
+    state_color="$GREEN"
+    if [ "${issue_states[$i]}" = "CLOSED" ]; then
+        state_color="$RED"
+    fi
+    printf "  ${CYAN}%2d)${NC} #%-4s [${state_color}%s${NC}] %s\n" "$((i + 1))" "${issue_numbers[$i]}" "${issue_states[$i]}" "${issue_titles[$i]}"
+done
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_display.sh"
+
+    run "$TEST_DIR/test_linked_issues_display.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Linked issues:"* ]]
+    [[ "$output" == *"#10"* ]]
+    [[ "$output" == *"OPEN"* ]]
+    [[ "$output" == *"Login bug"* ]]
+    [[ "$output" == *"#25"* ]]
+    [[ "$output" == *"CLOSED"* ]]
+    [[ "$output" == *"Dark mode"* ]]
+}
+
+@test "view_linked_issues shows all closed message when no open issues" {
+    cat > "$TEST_DIR/test_linked_issues_all_closed.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+issue_states=("CLOSED" "CLOSED")
+
+has_open=false
+for state in "${issue_states[@]}"; do
+    if [ "$state" = "OPEN" ]; then
+        has_open=true
+        break
+    fi
+done
+
+if [ "$has_open" = false ]; then
+    echo -e "  ${YELLOW}ℹ${NC} All linked issues are already closed"
+    echo "ALL_CLOSED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_all_closed.sh"
+
+    run "$TEST_DIR/test_linked_issues_all_closed.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"All linked issues are already closed"* ]]
+    [[ "$output" == *"ALL_CLOSED"* ]]
+}
+
+@test "view_linked_issues close all option closes open issues (mocked)" {
+    cat > "$TEST_DIR/test_linked_issues_close_all.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh
+gh() {
+    if [ "$1" = "issue" ] && [ "$2" = "close" ]; then
+        return 0
+    fi
+}
+
+issue_numbers=("10" "25" "30")
+issue_titles=("Login bug" "Dark mode" "Old issue")
+issue_states=("OPEN" "OPEN" "CLOSED")
+
+open_indices=()
+for i in "${!issue_numbers[@]}"; do
+    if [ "${issue_states[$i]}" = "OPEN" ]; then
+        open_indices+=("$i")
+    fi
+done
+
+# Simulate close all
+for idx in "${open_indices[@]}"; do
+    inum="${issue_numbers[$idx]}"
+    ititle="${issue_titles[$idx]}"
+    echo -e "${BLUE}Closing issue #${inum}...${NC}"
+    if gh issue close "$inum" &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Issue #${inum} closed: ${ititle}"
+    fi
+done
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_close_all.sh"
+
+    run "$TEST_DIR/test_linked_issues_close_all.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Issue #10 closed: Login bug"* ]]
+    [[ "$output" == *"Issue #25 closed: Dark mode"* ]]
+    # Issue #30 was CLOSED, should not appear
+    [[ "$output" != *"Issue #30"* ]]
+}
+
+@test "view_linked_issues close single issue by number (mocked)" {
+    cat > "$TEST_DIR/test_linked_issues_close_single.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Mock gh
+gh() {
+    if [ "$1" = "issue" ] && [ "$2" = "close" ]; then
+        return 0
+    fi
+}
+
+issue_numbers=("10" "25")
+issue_titles=("Login bug" "Dark mode")
+issue_states=("OPEN" "OPEN")
+
+open_indices=(0 1)
+
+# Simulate selecting issue #25
+selection="25"
+
+for idx in "${open_indices[@]}"; do
+    if [ "${issue_numbers[$idx]}" = "$selection" ]; then
+        echo -e "${BLUE}Closing issue #${selection}...${NC}"
+        if gh issue close "$selection" &>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} Issue #${selection} closed: ${issue_titles[$idx]}"
+            echo "SINGLE_CLOSED"
+        fi
+    fi
+done
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_close_single.sh"
+
+    run "$TEST_DIR/test_linked_issues_close_single.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Issue #25 closed: Dark mode"* ]]
+    [[ "$output" == *"SINGLE_CLOSED"* ]]
+}
+
+@test "view_linked_issues skip option works" {
+    cat > "$TEST_DIR/test_linked_issues_skip.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+selection="0"
+
+if [ "$selection" = "0" ]; then
+    echo -e "  ${YELLOW}ℹ${NC} Skipping"
+    echo "SKIPPED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_skip.sh"
+
+    run "$TEST_DIR/test_linked_issues_skip.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Skipping"* ]]
+    [[ "$output" == *"SKIPPED"* ]]
+}
+
+@test "view_linked_issues offers close all and skip options" {
+    run grep "Close all open issues" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    run bash -c "sed -n '/^view_linked_issues()/,/^}/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'Skip'"
+    [ "$output" -ge 1 ]
+}
+
+@test "view_linked_issues handles gh issue close failure" {
+    cat > "$TEST_DIR/test_linked_issues_close_fail.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Mock gh to fail
+gh() {
+    return 1
+}
+
+inum="99"
+ititle="Missing issue"
+
+echo -e "${BLUE}Closing issue #${inum}...${NC}"
+if gh issue close "$inum" &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} Issue #${inum} closed: ${ititle}"
+else
+    echo -e "  ${RED}✗${NC} Failed to close issue #${inum}"
+    echo "CLOSE_FAILED"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_close_fail.sh"
+
+    run "$TEST_DIR/test_linked_issues_close_fail.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Failed to close issue #99"* ]]
+    [[ "$output" == *"CLOSE_FAILED"* ]]
+}
+
+@test "view_linked_issues parses case-insensitive keywords" {
+    cat > "$TEST_DIR/test_linked_issues_case.sh" << 'EOF'
+#!/usr/bin/env bash
+
+pr_body="CLOSES #10
+fixes #20
+Resolves #30
+part of #40"
+
+issue_refs=()
+while IFS= read -r ref; do
+    already_found=false
+    for existing in "${issue_refs[@]}"; do
+        if [ "$existing" = "$ref" ]; then
+            already_found=true
+            break
+        fi
+    done
+    if [ "$already_found" = false ]; then
+        issue_refs+=("$ref")
+    fi
+done < <(echo "$pr_body" | grep -oiE '(closes|fixes|resolves|part of)\s+#[0-9]+' | grep -oE '[0-9]+')
+
+echo "COUNT=${#issue_refs[@]}"
+for ref in "${issue_refs[@]}"; do
+    echo "ISSUE=$ref"
+done
+EOF
+    chmod +x "$TEST_DIR/test_linked_issues_case.sh"
+
+    run "$TEST_DIR/test_linked_issues_case.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COUNT=4"* ]]
+    [[ "$output" == *"ISSUE=10"* ]]
+    [[ "$output" == *"ISSUE=20"* ]]
+    [[ "$output" == *"ISSUE=30"* ]]
+    [[ "$output" == *"ISSUE=40"* ]]
 }
 
 # =============================================================================

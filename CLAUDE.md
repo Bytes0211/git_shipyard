@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates the Git workflow: staging, committing, pushing, and creating GitHub pull requests in one interactive session. No build system or external dependencies beyond git, gh CLI, and bash 4.0+.
+Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates the Git workflow: staging, committing, pushing, creating GitHub pull requests, and managing PRs/issues — all in one interactive session. No build system or external dependencies beyond git, gh CLI, jq, and bash 4.0+.
 
 ## Commands
 
@@ -12,6 +12,7 @@ Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates th
 # Run the script
 ./git-shipyard.sh
 ./git-shipyard.sh --base production --head feature-branch
+./git-shipyard.sh --draft
 ./git-shipyard.sh --help
 
 # Run tests (requires bats - https://github.com/bats-core/bats-core)
@@ -30,22 +31,36 @@ shellcheck git-shipyard.sh
 
 The script auto-detects repository state and switches between three modes:
 
-- **Full mode** (uncommitted changes exist): stage → commit → push → create PR
-- **PR-only mode** (commits ahead, open PR exists): push (if needed) → create PR
-- **Squash-merge mode** (commits ahead, no open PRs): user chooses PR or direct squash-merge into base
+- **Full mode** (uncommitted changes exist): stage → commit → push → sync → create PR
+- **PR-only mode** (commits ahead of base): push (if needed) → sync → create PR
+- **PR Management mode** (clean working tree, no commits ahead): select a PR → action menu
 
-Detection relies on `has_uncommitted_changes()`, `has_commits_ahead()`, and `has_open_prs()` functions.
+Detection relies on `has_uncommitted_changes()` and `has_commits_ahead()` functions.
+
+### PR Management Action Menu
+
+When entering PR Management mode, the user selects an open PR, then chooses from:
+
+1. **View details & comments** (`view_pr_details()`): Shows PR metadata (title, state, author, branch, diff stats, labels, description), comments with authors/dates, and code reviews with color-coded states (APPROVED/CHANGES_REQUESTED/COMMENTED)
+2. **Close PR** (`close_pr()`): Closes without merging, optionally deletes remote branch, offers to clean up local branch
+3. **Squash-merge PR** (`squash_merge_pr()`): Squash-merges via `gh pr merge --squash --delete-branch`, switches to base, pulls latest, cleans up local branch, resets dev environment
+4. **View/close linked issues** (`view_linked_issues()`): Parses PR body for issue references (`Closes #N`, `Fixes #N`, `Resolves #N`, `Part of #N`), displays issues with state (OPEN/CLOSED), offers to close individual or all open issues
+
+The action menu loops — view and linked-issues actions return to the menu; close and squash-merge exit.
 
 ### Script Structure (git-shipyard.sh)
 
 - **Lines 10-11**: Default branch config (`BASE_BRANCH="main"`, `HEAD_BRANCH="dev"`)
-- **Utility functions**: Color output, `error_exit()`, command checking
-- **Pre-flight checks**: Validates git, gh CLI, authentication, remote
-- **Line 164**: Stdin buffer flush for pasted multi-line text
-- **Git operations section (lines ~197-224)**: Where new workflow steps should be inserted
-- **PR creation**: Uses `gh pr create --base BASE --head HEAD --fill`
-- **Line 259**: Global ERR trap for unexpected errors
-- **Special case**: Existing PR opens in browser instead of failing
+- **Utility functions**: Color output, `error_exit()`, `spinner()`, command checking, `get_editor()`, `format_message_preview()`
+- **Pre-flight checks**: Validates git, gh CLI, jq, authentication, remote, detached HEAD, base branch guard
+- **Commit workflow**: `get_commit_message()` (single-line or editor), `link_to_pr()` (amend commit with PR reference)
+- **Issue linking**: `select_issue()` fetches open issues for PR linking; when none exist, offers to create one via `_create_issue_for_pr()`
+- **Sync**: `sync_with_base()` fetches and merges base into head before PR creation; `check_merge_in_progress()` intercepts unresolved merges
+- **PR Management**: `pr_management_mode()` → action menu dispatching to `view_pr_details()`, `close_pr()`, `squash_merge_pr()`, `view_linked_issues()`
+- **Dev reset**: `reset_dev_environment()` pulls latest base, recreates fresh head branch (called by `squash_merge_pr()` after successful merge)
+- **Standalone issue creation**: `prompt_issue_creation()` at startup before pre-flight checks
+- **PR creation**: Uses `gh pr create --fill` or `--title`/`--body` when linking an issue
+- **Source guard**: `main()` only runs when executed directly, not when sourced (enables testing)
 
 ### Adding New Workflow Steps
 
@@ -61,15 +76,30 @@ echo -e "  ${GREEN}✓${NC} Success message"
 ### Issue and PR Linking
 
 - `link_to_pr()`: Post-commit, amends commit message with `Part of #<PR>` to link to an existing open PR
-- `select_issue()`: Pre-PR-creation, adds `Closes #<issue>` to the new PR body
-- `create_github_issue()`: Post-issue-creation, offers to append `Closes #<issue>` to an existing open PR body via `gh pr edit`
+- `select_issue()`: Pre-PR-creation, fetches open issues and lets user pick one. Sets `SELECTED_ISSUE` which adds `Closes #<issue>` to the new PR body. When no issues exist, offers to create one via `_create_issue_for_pr()`
+- `_create_issue_for_pr()`: Internal helper that creates a GitHub issue and sets `SELECTED_ISSUE` so it's linked to the upcoming PR
+- `view_linked_issues()`: In PR Management mode, parses a PR body for linked issue references and offers to close them
 
 ### Test Structure
 
-Tests use BATS with isolated temporary git repositories per test case. Each test in `test/git-shipyard.bats` sources script functions via a helper that avoids running `main()`. Tests cover argument parsing, all three execution modes, issue/PR linking, command validation, and edge cases.
+Tests use BATS with isolated temporary git repositories per test case. Each test in `test/git-shipyard.bats` sources script functions via a helper that avoids running `main()`. Tests cover:
+
+- Argument parsing (`--base`, `--head`, `--draft`, `--help`)
+- Mode detection (full, PR-only, PR management)
+- Command validation and error handling
+- Issue creation and linking (`select_issue`, `_create_issue_for_pr`)
+- PR Management action menu validation
+- `view_pr_details()`: metadata display, comments, review state color-coding
+- `close_pr()`: cancellation, success/failure, branch deletion, summary
+- `squash_merge_pr()`: confirmation, conflict detection, summary, `reset_dev_environment` integration
+- `view_linked_issues()`: keyword parsing (case-insensitive), deduplication, state display, close all/single/skip, failure handling
+- Sync (`sync_with_base`, `check_merge_in_progress`)
+- Standalone issue creation (`prompt_issue_creation`)
 
 ## Key Constraints
 
-- GitHub-only (hardcoded to `gh` CLI) — abstracting would require changes to auth check (lines 98-101) and PR creation (lines 226-238)
+- GitHub-only (hardcoded to `gh` CLI) — abstracting would require changes to auth check and all `gh` calls
+- Requires `jq` for JSON parsing of `gh` API responses
 - Uses `origin` remote by default
 - Stages all changes (`git add .`), no selective staging
+- `reset_dev_environment()` is only called after squash-merge, not before the PR management menu
