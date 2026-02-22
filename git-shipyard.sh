@@ -15,7 +15,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --base)
             if [ -z "$2" ] || [[ "$2" == --* ]]; then
-                echo "Error: --base requires a branch name"
+                echo "Error: Missing value for --base"
                 exit 1
             fi
             BASE_BRANCH="$2"
@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --head)
             if [ -z "$2" ] || [[ "$2" == --* ]]; then
-                echo "Error: --head requires a branch name"
+                echo "Error: Missing value for --head"
                 exit 1
             fi
             HEAD_BRANCH="$2"
@@ -607,6 +607,9 @@ pr_management_mode() {
     echo -e "  2. Delete remote branch (--delete-branch)"
     echo -e "  3. Switch to ${BASE_BRANCH} and pull latest"
     echo -e "  4. Delete local head branch"
+    echo ""
+    echo -e "  ${YELLOW}⚠${NC}  Note: Squash-merge does not record merge history."
+    echo -e "       If you keep the branch and merge again, duplicate conflicts may arise."
     echo ""
 
     read -r -p "Proceed? (y/N): " confirm
