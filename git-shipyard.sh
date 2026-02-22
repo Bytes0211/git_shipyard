@@ -61,7 +61,7 @@ spinner() {
     local spinstr='|/-\\'
     local i=0
     local duration=${2:-20}  # iterations, not seconds
-    
+
     while (( i < duration )); do
         local char=${spinstr:i%4:1}
         printf " [%c]  " "$char"
@@ -156,7 +156,7 @@ format_message_preview() {
     first_line=$(echo "$msg" | head -1)
     local line_count
     line_count=$(echo "$msg" | wc -l)
-    
+
     if [ "$line_count" -gt 1 ]; then
         echo "${first_line} (+$((line_count - 1)) more lines)"
     else
@@ -167,17 +167,17 @@ format_message_preview() {
 # Prompt for commit message (single-line or multi-line via editor)
 get_commit_message() {
     echo -e "${YELLOW}Enter your commit message:${NC}"
-    
+
     # If not interactive (piped input), use simple single-line mode
     if [ ! -t 0 ]; then
         read -r -p "> " COMMIT_MESSAGE
         return
     fi
-    
+
     echo -e "  ${CYAN}1)${NC} Single line (type here)"
     echo -e "  ${CYAN}2)${NC} Multi-line (open editor)"
     echo ""
-    
+
     local choice
     while true; do
         read -r -p "Choose (1/2): " choice
@@ -192,16 +192,16 @@ get_commit_message() {
                 editor=$(get_editor)
                 local tmpfile
                 tmpfile=$(mktemp)
-                
+
                 # Add template
                 echo "" > "$tmpfile"
                 echo "" >> "$tmpfile"
                 echo "# Enter your commit message above." >> "$tmpfile"
                 echo "# Lines starting with '#' will be ignored." >> "$tmpfile"
-                
+
                 echo -e "Opening editor (${editor})..."
                 $editor "$tmpfile"
-                
+
                 # Read and clean message (remove comments and trailing whitespace)
                 COMMIT_MESSAGE=$(grep -v '^#' "$tmpfile" | sed -e 's/[[:space:]]*$//' | sed '/^$/N;/^\n$/d')
                 rm -f "$tmpfile"
@@ -217,36 +217,36 @@ get_commit_message() {
 # Prompt user to link commit to an existing PR
 link_to_pr() {
     local commit_msg="$1"
-    
+
     echo ""
     echo -e "${BLUE}Fetching open pull requests...${NC}"
-    
+
     # Get open PRs as JSON and parse them
     local pr_list
     pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
-    
+
     if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
         echo -e "  ${YELLOW}ℹ${NC} No open pull requests found"
         return 1
     fi
-    
+
     # Parse PR numbers and titles into arrays
     local pr_numbers=()
     local pr_titles=()
     while IFS= read -r line; do
         pr_numbers+=("$line")
     done < <(echo "$pr_list" | jq -r '.[].number')
-    
+
     while IFS= read -r line; do
         pr_titles+=("$line")
     done < <(echo "$pr_list" | jq -r '.[].title')
-    
+
     local pr_count=${#pr_numbers[@]}
-    
+
     echo ""
     echo -e "${YELLOW}Link this commit to an existing PR?${NC}"
     echo ""
-    
+
     # Display PR options
     for i in "${!pr_numbers[@]}"; do
         printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}"
@@ -254,86 +254,106 @@ link_to_pr() {
     echo ""
     printf "  ${CYAN}%2d)${NC} None (skip linking)\n" "0"
     echo ""
-    
+
     # Get user selection
     local selection
     while true; do
         read -r -p "Select PR [0-${pr_count}]: " selection
-        
+
         # Validate input
         if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$pr_count" ]; then
             break
         fi
         echo -e "${RED}Invalid selection. Please enter a number between 0 and ${pr_count}.${NC}"
     done
-    
+
     # Handle selection
     if [ "$selection" -eq 0 ]; then
         echo -e "  ${YELLOW}ℹ${NC} Skipping PR link"
         return 1
     fi
-    
+
     local selected_pr=${pr_numbers[$((selection - 1))]}
     local selected_title=${pr_titles[$((selection - 1))]}
-    
+
     echo ""
     echo -e "${BLUE}Linking commit to PR #${selected_pr}...${NC}"
     echo -e "  ${YELLOW}⚠${NC}  Warning: This will amend the commit and change its SHA"
-    
+
     # Store original commit hash for potential revert
     local original_hash
     original_hash=$(git rev-parse HEAD)
-    
+
     # Amend the commit message to include PR reference
     local new_message="${commit_msg}
 
 Part of #${selected_pr}"
-    
+
     if ! git commit --amend -m "$new_message"; then
         echo -e "  ${RED}✗${NC} Failed to amend commit"
         echo -e "  ${YELLOW}ℹ${NC} Original commit preserved at: ${original_hash}"
         return 1
     fi
-    
+
     echo -e "  ${GREEN}✓${NC} Commit linked to PR #${selected_pr}: ${selected_title}"
     return 0
 }
 
 # Prompt user to link an issue to the PR
 # Sets global SELECTED_ISSUE variable
+# When issues exist: display list and let user pick one or skip
+# When no issues exist: offer to create a new issue to link to the PR
 SELECTED_ISSUE=""
+CREATED_ISSUE_FOR_PR=""
 select_issue() {
     SELECTED_ISSUE=""
-    
+    CREATED_ISSUE_FOR_PR=""
+
     echo ""
     echo -e "${BLUE}Fetching open issues...${NC}"
-    
+
     # Get open issues as JSON and parse them
     local issue_list
     issue_list=$(gh issue list --state open --json number,title --limit 20 2>/dev/null)
-    
+
     if [ -z "$issue_list" ] || [ "$issue_list" = "[]" ]; then
         echo -e "  ${YELLOW}ℹ${NC} No open issues found"
-        return 1
+
+        # Skip creation prompt in non-interactive mode
+        if [ ! -t 0 ]; then
+            return 1
+        fi
+
+        # Offer to create a new issue to link to the PR
+        echo ""
+        local create_issue
+        read -r -p "Create a new issue to link to this PR? (y/N): " create_issue
+        if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
+            echo -e "  ${YELLOW}ℹ${NC} Skipping issue link"
+            return 1
+        fi
+
+        _create_issue_for_pr
+        return $?
     fi
-    
+
     # Parse issue numbers and titles into arrays
     local issue_numbers=()
     local issue_titles=()
     while IFS= read -r line; do
         issue_numbers+=("$line")
     done < <(echo "$issue_list" | jq -r '.[].number')
-    
+
     while IFS= read -r line; do
         issue_titles+=("$line")
     done < <(echo "$issue_list" | jq -r '.[].title')
-    
+
     local issue_count=${#issue_numbers[@]}
-    
+
     echo ""
     echo -e "${YELLOW}Link an issue to this PR?${NC}"
     echo ""
-    
+
     # Display issue options
     for i in "${!issue_numbers[@]}"; do
         printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${issue_numbers[$i]}" "${issue_titles[$i]}"
@@ -341,53 +361,36 @@ select_issue() {
     echo ""
     printf "  ${CYAN}%2d)${NC} None (skip linking)\n" "0"
     echo ""
-    
+
     # Get user selection
     local selection
     while true; do
         read -r -p "Select issue [0-${issue_count}]: " selection
-        
+
         # Validate input
         if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$issue_count" ]; then
             break
         fi
         echo -e "${RED}Invalid selection. Please enter a number between 0 and ${issue_count}.${NC}"
     done
-    
+
     # Handle selection
     if [ "$selection" -eq 0 ]; then
         echo -e "  ${YELLOW}ℹ${NC} Skipping issue link"
         return 1
     fi
-    
+
     SELECTED_ISSUE=${issue_numbers[$((selection - 1))]}
     local selected_title=${issue_titles[$((selection - 1))]}
-    
+
     echo -e "  ${GREEN}✓${NC} Will link issue #${SELECTED_ISSUE}: ${selected_title}"
     return 0
 }
 
-# Create a GitHub issue after the sync step
-# Sets global CREATED_ISSUE_NUMBER and CREATED_ISSUE_TITLE variables
-CREATED_ISSUE_NUMBER=""
-CREATED_ISSUE_TITLE=""
-create_github_issue() {
-    CREATED_ISSUE_NUMBER=""
-    CREATED_ISSUE_TITLE=""
-
-    # Skip in non-interactive mode
-    if [ ! -t 0 ]; then
-        return 0
-    fi
-
-    echo ""
-    local create_issue
-    read -r -p "Create a GitHub Issue? (y/N): " create_issue
-    if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
-        return 0
-    fi
-
-    # Prompt for issue title (single-line)
+# Internal helper: create a new GitHub issue and set SELECTED_ISSUE
+# Called by select_issue() when no open issues exist
+_create_issue_for_pr() {
+    # Prompt for issue title
     echo ""
     echo -e "${YELLOW}Enter issue title:${NC}"
     local issue_title
@@ -395,10 +398,10 @@ create_github_issue() {
 
     if [ -z "$issue_title" ]; then
         echo -e "  ${YELLOW}ℹ${NC} Skipping issue creation (empty title)"
-        return 0
+        return 1
     fi
 
-    # Prompt for issue body (single-line or editor, same pattern as get_commit_message)
+    # Prompt for issue body
     echo ""
     echo -e "${YELLOW}Enter issue body:${NC}"
     echo -e "  ${CYAN}1)${NC} Single line (type here)"
@@ -421,7 +424,6 @@ create_github_issue() {
                 local tmpfile
                 tmpfile=$(mktemp)
 
-                # Pre-populate editor with issue template if available
                 local template_file="$HOME/.config/issue-template.md"
                 if [ -f "$template_file" ]; then
                     cat "$template_file" > "$tmpfile"
@@ -433,7 +435,6 @@ create_github_issue() {
                 echo -e "Opening editor (${editor})..."
                 $editor "$tmpfile"
 
-                # Read and clean body (remove comments and trailing whitespace)
                 issue_body=$(grep -v '^#' "$tmpfile" | sed -e 's/[[:space:]]*$//' | sed '/^$/N;/^\n$/d')
                 rm -f "$tmpfile"
                 break
@@ -454,75 +455,14 @@ create_github_issue() {
         return 1
     fi
 
-    # Extract issue number from the returned URL (e.g. https://github.com/owner/repo/issues/42)
-    CREATED_ISSUE_NUMBER=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
-    CREATED_ISSUE_TITLE="$issue_title"
-    echo -e "  ${GREEN}✓${NC} Issue #${CREATED_ISSUE_NUMBER} created: ${CREATED_ISSUE_TITLE}"
-
-    # Offer to link the new issue to an existing open PR
-    local pr_list
-    pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
-
-    if [ -n "$pr_list" ] && [ "$pr_list" != "[]" ]; then
-        local pr_numbers=()
-        local pr_titles=()
-        while IFS= read -r line; do
-            pr_numbers+=("$line")
-        done < <(echo "$pr_list" | jq -r '.[].number')
-
-        while IFS= read -r line; do
-            pr_titles+=("$line")
-        done < <(echo "$pr_list" | jq -r '.[].title')
-
-        local pr_count=${#pr_numbers[@]}
-
-        echo ""
-        echo -e "${YELLOW}Link this issue to an existing PR?${NC}"
-        echo ""
-
-        for i in "${!pr_numbers[@]}"; do
-            printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}"
-        done
-        echo ""
-        printf "  ${CYAN}%2d)${NC} None (skip linking)\n" "0"
-        echo ""
-
-        local selection
-        while true; do
-            read -r -p "Select PR [0-${pr_count}]: " selection
-
-            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$pr_count" ]; then
-                break
-            fi
-            echo -e "${RED}Invalid selection. Please enter a number between 0 and ${pr_count}.${NC}"
-        done
-
-        if [ "$selection" -eq 0 ]; then
-            echo -e "  ${YELLOW}ℹ${NC} Skipping PR link"
-        else
-            local selected_pr=${pr_numbers[$((selection - 1))]}
-            local selected_title=${pr_titles[$((selection - 1))]}
-
-            echo ""
-            echo -e "${BLUE}Linking issue #${CREATED_ISSUE_NUMBER} to PR #${selected_pr}...${NC}"
-
-            local existing_body
-            existing_body=$(gh pr view "$selected_pr" --json body --jq '.body' 2>/dev/null)
-
-            local new_body="${existing_body}
-
-Closes #${CREATED_ISSUE_NUMBER}"
-
-            if gh pr edit "$selected_pr" --body "$new_body" &>/dev/null; then
-                echo -e "  ${GREEN}✓${NC} Linked issue #${CREATED_ISSUE_NUMBER} to PR #${selected_pr}: ${selected_title}"
-            else
-                echo -e "  ${RED}✗${NC} Failed to link issue to PR #${selected_pr}"
-            fi
-        fi
-    fi
-
+    # Extract issue number from the returned URL
+    SELECTED_ISSUE=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+    CREATED_ISSUE_FOR_PR="$issue_title"
+    echo -e "  ${GREEN}✓${NC} Issue #${SELECTED_ISSUE} created: ${issue_title}"
+    echo -e "  ${GREEN}✓${NC} Will link issue #${SELECTED_ISSUE} to this PR"
     return 0
 }
+
 
 # Check if a merge is in progress from a previous pre-PR sync attempt
 # Called early in main() before mode detection to intercept MERGE_HEAD state
@@ -951,9 +891,9 @@ ${overview}
 main() {
     # Trap for unexpected errors (inside main for source guard compatibility)
     trap 'error_exit "An unexpected error occurred."' ERR
-    
+
     clear
-    
+
     # Welcome banner
     echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║      ${GREEN}Welcome to Git Shipyard${CYAN}             ║${NC}"
@@ -971,25 +911,25 @@ main() {
 
     # Pre-flight checks
     echo -e "${BLUE}Running pre-flight checks...${NC}"
-    
+
     check_command "git"
     echo -e "  ${GREEN}✓${NC} git found"
-    
+
     check_command "gh"
     echo -e "  ${GREEN}✓${NC} gh CLI found"
-    
+
     check_command "jq"
     echo -e "  ${GREEN}✓${NC} jq found"
-    
+
     check_git_repo
     echo -e "  ${GREEN}✓${NC} Inside git repository"
-    
+
     check_not_detached
     echo -e "  ${GREEN}✓${NC} On a valid branch"
-    
+
     check_gh_auth
     echo -e "  ${GREEN}✓${NC} GitHub authenticated"
-    
+
     check_remote
     echo -e "  ${GREEN}✓${NC} Remote 'origin' configured"
 
@@ -1022,28 +962,28 @@ main() {
         pr_management_mode
         return
     fi
-    
+
     if [ "$mode" = "full" ]; then
         # Prompt for commit message
         COMMIT_MESSAGE=""
         get_commit_message
         commit_message="$COMMIT_MESSAGE"
-        
+
         # Validate commit message
         if [ -z "$commit_message" ]; then
             error_exit "Commit message cannot be empty."
         fi
-        
+
         # Flush any remaining input (handles pasted multi-line text)
         # Only flush if running interactively (not piped)
         if [ -t 0 ]; then
             read -r -t 0.1 -n 10000 discard 2>/dev/null || true
         fi
-        
+
         # Format preview for multi-line messages
         local message_preview
         message_preview=$(format_message_preview "$commit_message")
-        
+
         # Confirm action
         echo ""
         echo -e "${BLUE}The following actions will be performed:${NC}"
@@ -1059,24 +999,24 @@ main() {
         echo -e "  2. Sync with ${BASE_BRANCH} (merge any new changes)"
         echo -e "  3. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
     fi
-    
+
     echo ""
-    
+
     read -r -p "Proceed? (y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         echo -e "${YELLOW}Operation cancelled.${NC}"
         echo -e "${YELLOW}Goodbye!${NC}"
         exit 0
     fi
-    
+
     echo ""
-    
+
     # Spinner pause
     echo -e "${BLUE}Preparing to ship...${NC}"
     spinner $$ 2
     echo -e "  ${GREEN}✓${NC} Ready"
     echo ""
-    
+
     if [ "$mode" = "full" ]; then
         # Full workflow: stage, commit, push, create PR
         echo -e "${BLUE}Staging changes...${NC}"
@@ -1084,7 +1024,7 @@ main() {
             error_exit "Failed to stage changes."
         fi
         echo -e "  ${GREEN}✓${NC} Changes staged"
-        
+
         echo -e "${BLUE}Committing...${NC}"
         if ! git commit -m "$commit_message"; then
             echo -e "  ${RED}✗${NC} Commit failed"
@@ -1092,10 +1032,10 @@ main() {
             error_exit "Commit failed. Check your commit message."
         fi
         echo -e "  ${GREEN}✓${NC} Changes committed"
-        
+
         # Offer to link commit to existing PR
         link_to_pr "$commit_message" || true
-        
+
         echo -e "${BLUE}Pushing to origin/${HEAD_BRANCH}...${NC}"
         local push_output
         if ! push_output=$(git push -u origin "${HEAD_BRANCH}" 2>&1); then
@@ -1134,10 +1074,10 @@ main() {
 
     # Offer to link an issue to the PR
     select_issue || true
-    
+
     echo -e "${BLUE}Creating pull request...${NC}"
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
-    
+
     # Build PR create command with optional issue link
     local pr_create_failed=false
     if [ -n "$SELECTED_ISSUE" ]; then
@@ -1167,7 +1107,7 @@ Closes #${SELECTED_ISSUE}"
             pr_create_failed=true
         fi
     fi
-    
+
     if [ "$pr_create_failed" = true ]; then
         # Check if PR already exists
         if gh pr view "${HEAD_BRANCH}" &>/dev/null; then
@@ -1178,12 +1118,9 @@ Closes #${SELECTED_ISSUE}"
             error_exit "Failed to create PR. Check the output above for details."
         fi
     fi
-    
+
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
     echo ""
-
-    # Offer to create a new GitHub issue
-    create_github_issue || true
 
     # Success message
     echo ""
@@ -1203,10 +1140,11 @@ Closes #${SELECTED_ISSUE}"
     fi
     echo -e "  • Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
     if [ -n "$SELECTED_ISSUE" ]; then
-        echo -e "  • Linked to issue #${SELECTED_ISSUE} (closes on merge)"
-    fi
-    if [ -n "$CREATED_ISSUE_NUMBER" ]; then
-        echo -e "  • Created issue #${CREATED_ISSUE_NUMBER}: ${CREATED_ISSUE_TITLE}"
+        if [ -n "$CREATED_ISSUE_FOR_PR" ]; then
+            echo -e "  • Created and linked issue #${SELECTED_ISSUE}: ${CREATED_ISSUE_FOR_PR}"
+        else
+            echo -e "  • Linked to issue #${SELECTED_ISSUE} (closes on merge)"
+        fi
     fi
     echo ""
     echo -e "${YELLOW}Goodbye!${NC}"
