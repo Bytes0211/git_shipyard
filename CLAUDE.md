@@ -28,12 +28,13 @@ shellcheck git-shipyard.sh
 
 ### Execution Modes
 
-The script auto-detects repository state and switches between two modes:
+The script auto-detects repository state and switches between three modes:
 
 - **Full mode** (uncommitted changes exist): stage → commit → push → create PR
-- **PR-only mode** (commits ahead of base, no uncommitted changes): push (if needed) → create PR
+- **PR-only mode** (commits ahead, open PR exists): push (if needed) → create PR
+- **Squash-merge mode** (commits ahead, no open PRs): user chooses PR or direct squash-merge into base
 
-Detection relies on `has_uncommitted_changes()` and `has_commits_ahead()` functions.
+Detection relies on `has_uncommitted_changes()`, `has_commits_ahead()`, and `has_open_prs()` functions.
 
 ### Script Structure (git-shipyard.sh)
 
@@ -57,9 +58,15 @@ fi
 echo -e "  ${GREEN}✓${NC} Success message"
 ```
 
+### Issue and PR Linking
+
+- `link_to_pr()`: Post-commit, amends commit message with `Part of #<PR>` to link to an existing open PR
+- `select_issue()`: Pre-PR-creation, adds `Closes #<issue>` to the new PR body
+- `create_github_issue()`: Post-issue-creation, offers to append `Closes #<issue>` to an existing open PR body via `gh pr edit`
+
 ### Test Structure
 
-Tests use BATS with isolated temporary git repositories per test case. Each test in `test/git-shipyard.bats` sources script functions via a helper that avoids running `main()`. Tests cover argument parsing, both execution modes, command validation, and edge cases.
+Tests use BATS with isolated temporary git repositories per test case. Each test in `test/git-shipyard.bats` sources script functions via a helper that avoids running `main()`. Tests cover argument parsing, all three execution modes, issue/PR linking, command validation, and edge cases.
 
 ## Key Constraints
 

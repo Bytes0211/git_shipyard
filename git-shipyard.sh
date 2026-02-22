@@ -458,6 +458,69 @@ create_github_issue() {
     CREATED_ISSUE_NUMBER=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
     CREATED_ISSUE_TITLE="$issue_title"
     echo -e "  ${GREEN}✓${NC} Issue #${CREATED_ISSUE_NUMBER} created: ${CREATED_ISSUE_TITLE}"
+
+    # Offer to link the new issue to an existing open PR
+    local pr_list
+    pr_list=$(gh pr list --state open --json number,title --limit 20 2>/dev/null)
+
+    if [ -n "$pr_list" ] && [ "$pr_list" != "[]" ]; then
+        local pr_numbers=()
+        local pr_titles=()
+        while IFS= read -r line; do
+            pr_numbers+=("$line")
+        done < <(echo "$pr_list" | jq -r '.[].number')
+
+        while IFS= read -r line; do
+            pr_titles+=("$line")
+        done < <(echo "$pr_list" | jq -r '.[].title')
+
+        local pr_count=${#pr_numbers[@]}
+
+        echo ""
+        echo -e "${YELLOW}Link this issue to an existing PR?${NC}"
+        echo ""
+
+        for i in "${!pr_numbers[@]}"; do
+            printf "  ${CYAN}%2d)${NC} #%-4s %s\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}"
+        done
+        echo ""
+        printf "  ${CYAN}%2d)${NC} None (skip linking)\n" "0"
+        echo ""
+
+        local selection
+        while true; do
+            read -r -p "Select PR [0-${pr_count}]: " selection
+
+            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$pr_count" ]; then
+                break
+            fi
+            echo -e "${RED}Invalid selection. Please enter a number between 0 and ${pr_count}.${NC}"
+        done
+
+        if [ "$selection" -eq 0 ]; then
+            echo -e "  ${YELLOW}ℹ${NC} Skipping PR link"
+        else
+            local selected_pr=${pr_numbers[$((selection - 1))]}
+            local selected_title=${pr_titles[$((selection - 1))]}
+
+            echo ""
+            echo -e "${BLUE}Linking issue #${CREATED_ISSUE_NUMBER} to PR #${selected_pr}...${NC}"
+
+            local existing_body
+            existing_body=$(gh pr view "$selected_pr" --json body --jq '.body' 2>/dev/null)
+
+            local new_body="${existing_body}
+
+Closes #${CREATED_ISSUE_NUMBER}"
+
+            if gh pr edit "$selected_pr" --body "$new_body" &>/dev/null; then
+                echo -e "  ${GREEN}✓${NC} Linked issue #${CREATED_ISSUE_NUMBER} to PR #${selected_pr}: ${selected_title}"
+            else
+                echo -e "  ${RED}✗${NC} Failed to link issue to PR #${selected_pr}"
+            fi
+        fi
+    fi
+
     return 0
 }
 
@@ -743,6 +806,147 @@ pr_management_mode() {
     echo -e "${YELLOW}Goodbye!${NC}"
 }
 
+# Prompt to create a standalone GitHub issue before the main workflow
+# Returns 0 if issue was created (caller should exit), 1 otherwise (continue)
+prompt_issue_creation() {
+    # Skip in non-interactive mode
+    if [ ! -t 0 ]; then
+        return 1
+    fi
+
+    local create_issue
+    read -r -p "Create a GitHub Issue? (y/N): " create_issue
+    if [[ ! "$create_issue" =~ ^[Yy]$ ]]; then
+        return 1
+    fi
+
+    # Collect issue title
+    echo ""
+    echo -e "${YELLOW}Enter issue title:${NC}"
+    local issue_title
+    read -r -p "> " issue_title
+
+    if [ -z "$issue_title" ]; then
+        echo -e "  ${YELLOW}ℹ${NC} Skipping issue creation (empty title)"
+        return 1
+    fi
+
+    # Collect overview (single-line or editor, same pattern as get_commit_message)
+    echo ""
+    echo -e "${YELLOW}Enter issue overview:${NC}"
+    echo -e "  ${CYAN}1)${NC} Single line (type here)"
+    echo -e "  ${CYAN}2)${NC} Multi-line (open editor)"
+    echo ""
+
+    local overview=""
+    local choice
+    while true; do
+        read -r -p "Choose (1/2): " choice
+        case $choice in
+            1)
+                echo ""
+                read -r -p "> " overview
+                break
+                ;;
+            2)
+                local editor
+                editor=$(get_editor)
+                local tmpfile
+                tmpfile=$(mktemp)
+
+                echo "" > "$tmpfile"
+                echo "" >> "$tmpfile"
+                echo "# Enter your issue overview above." >> "$tmpfile"
+                echo "# Lines starting with '#' will be ignored." >> "$tmpfile"
+
+                echo -e "Opening editor (${editor})..."
+                $editor "$tmpfile"
+
+                overview=$(grep -v '^#' "$tmpfile" | sed -e 's/[[:space:]]*$//' | sed '/^$/N;/^\n$/d')
+                rm -f "$tmpfile"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice. Enter 1 or 2.${NC}"
+                ;;
+        esac
+    done
+
+    # Collect issue type
+    echo ""
+    echo -e "${YELLOW}Select issue type:${NC}"
+    echo -e "  ${CYAN}1)${NC} enhancement"
+    echo -e "  ${CYAN}2)${NC} bug"
+    echo -e "  ${CYAN}3)${NC} feature"
+    echo -e "  ${CYAN}4)${NC} docs"
+    echo -e "  ${CYAN}5)${NC} refactor"
+    echo ""
+
+    local type_selection
+    local issue_type
+    while true; do
+        read -r -p "Choose (1-5): " type_selection
+        case $type_selection in
+            1) issue_type="enhancement"; break ;;
+            2) issue_type="bug"; break ;;
+            3) issue_type="feature"; break ;;
+            4) issue_type="docs"; break ;;
+            5) issue_type="refactor"; break ;;
+            *) echo -e "${RED}Invalid choice. Enter a number between 1 and 5.${NC}" ;;
+        esac
+    done
+
+    # Build issue body from template
+    local template_file="$HOME/.config/issue-template.md"
+    local issue_body=""
+
+    if [ -f "$template_file" ]; then
+        # Load template, replace Overview content and Status using awk
+        issue_body=$(awk -v overview="$overview" '
+            /^## Overview$/ { print; print ""; print overview; skip=1; next }
+            /^## Status$/ { print; print ""; print "- Not Started"; skip=1; next }
+            /^## / { skip=0 }
+            !skip { print }
+        ' "$template_file" 2>/dev/null)
+
+        # If awk failed, fall back to simple construction
+        if [ -z "$issue_body" ]; then
+            issue_body="## Overview
+
+${overview}
+
+## Status
+
+- Not Started"
+        fi
+    else
+        echo -e "  ${YELLOW}⚠${NC}  No template found at ~/.config/issue-template.md. Using minimal body."
+        issue_body="## Overview
+
+${overview}
+
+## Status
+
+- Not Started"
+    fi
+
+    # Create the issue
+    echo ""
+    echo -e "${BLUE}Creating GitHub issue...${NC}"
+    local issue_output
+    if ! issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" --label "$issue_type" 2>&1); then
+        echo -e "  ${RED}✗${NC} Failed to create issue"
+        echo "$issue_output" >&2
+        return 1
+    fi
+
+    local issue_number
+    issue_number=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+    echo -e "  ${GREEN}✓${NC} Issue #${issue_number} created: ${issue_title}"
+
+    return 0
+}
+
 # Main script
 main() {
     # Trap for unexpected errors (inside main for source guard compatibility)
@@ -755,7 +959,16 @@ main() {
     echo -e "${CYAN}║      ${GREEN}Welcome to Git Shipyard${CYAN}             ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
     echo ""
-    
+
+    # Offer to create a standalone GitHub issue (exits after completion)
+    if prompt_issue_creation; then
+        echo ""
+        echo -e "${YELLOW}Goodbye!${NC}"
+        return
+    fi
+
+    echo ""
+
     # Pre-flight checks
     echo -e "${BLUE}Running pre-flight checks...${NC}"
     

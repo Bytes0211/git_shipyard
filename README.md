@@ -15,6 +15,7 @@
   - **Squash-merge mode** when no open PRs exist (merge directly without PR overhead)
 - 🔗 **PR linking**: Optionally link commits to existing open PRs
 - 🎫 **Issue linking**: Optionally link GitHub issues to new PRs (auto-closes on merge)
+- 🔀 **Issue-to-PR linking**: After creating a new issue, optionally append `Closes #<issue>` to an existing open PR body
 - 📝 **Multi-line commit messages**: Choose single-line input or open your preferred editor
 - ✅ **Pre-flight checks**: Validates environment before execution (git, gh CLI, jq, authentication, remote)
 - 🎨 **Beautiful CLI interface**: Color-coded output with progress indicators
