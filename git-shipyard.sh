@@ -507,19 +507,24 @@ check_merge_in_progress() {
 
 # Sync HEAD_BRANCH with BASE_BRANCH before creating a PR
 # Fetches latest base, merges it in; on conflict lists files and exits with instructions
+# Sets global SYNC_RESULT for summary display: "synced", "up_to_date", or "skipped"
+SYNC_RESULT=""
 sync_with_base() {
+    SYNC_RESULT=""
     echo ""
     echo -e "${BLUE}Syncing ${HEAD_BRANCH} with ${BASE_BRANCH} before PR...${NC}"
 
     # Fetch latest base branch from remote
     if ! git fetch origin "${BASE_BRANCH}" 2>/dev/null; then
         echo -e "  ${YELLOW}⚠${NC}  Could not fetch ${BASE_BRANCH} — skipping sync"
+        SYNC_RESULT="skipped"
         return 0
     fi
 
     # Check if head already contains all base commits (already up to date)
     if git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD 2>/dev/null; then
         echo -e "  ${GREEN}✓${NC} ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+        SYNC_RESULT="up_to_date"
         return 0
     fi
 
@@ -555,6 +560,7 @@ sync_with_base() {
         error_exit "Failed to push merge commit to remote."
     fi
     echo -e "  ${GREEN}✓${NC} Merge commit pushed to remote"
+    SYNC_RESULT="synced"
 }
 
 # PR Management Mode:
@@ -934,6 +940,11 @@ Closes #${SELECTED_ISSUE}"
         echo -e "  • Changes staged and committed"
     fi
     echo -e "  • Pushed to origin/${HEAD_BRANCH}"
+    if [ "$SYNC_RESULT" = "synced" ]; then
+        echo -e "  • Synced ${HEAD_BRANCH} with ${BASE_BRANCH} (merged new changes)"
+    elif [ "$SYNC_RESULT" = "up_to_date" ]; then
+        echo -e "  • Synced ${HEAD_BRANCH} with ${BASE_BRANCH} (already up to date)"
+    fi
     echo -e "  • Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
     if [ -n "$SELECTED_ISSUE" ]; then
         echo -e "  • Linked to issue #${SELECTED_ISSUE} (closes on merge)"
