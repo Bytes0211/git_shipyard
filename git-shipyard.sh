@@ -1051,6 +1051,129 @@ view_linked_issues() {
     done
 }
 
+# Check for open PRs with comments during pre-flight (pr_only mode)
+# Lists PRs that have comments, lets user view one, then close+exit or just exit
+# Returns 0 if user chose to exit (caller should return), 1 to continue normal workflow
+check_prs_with_comments() {
+    # Skip in non-interactive mode
+    if [ ! -t 0 ]; then
+        return 1
+    fi
+
+    echo ""
+    echo -e "📡 ${BLUE}Checking for open PRs with comments...${NC}"
+
+    # Fetch open PRs with their comments
+    local pr_list
+    pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+
+    if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
+        echo -e "  ℹ️  No open pull requests found"
+        return 1
+    fi
+
+    # Filter to only PRs that have at least one comment
+    local prs_with_comments
+    prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+
+    if [ -z "$prs_with_comments" ] || [ "$prs_with_comments" = "[]" ]; then
+        echo -e "  ℹ️  No open PRs with comments"
+        return 1
+    fi
+
+    # Parse PR numbers, titles, and comment counts into arrays
+    local pr_numbers=()
+    local pr_titles=()
+    local pr_comment_counts=()
+    while IFS= read -r line; do
+        pr_numbers+=("$line")
+    done < <(echo "$prs_with_comments" | jq -r '.[].number')
+
+    while IFS= read -r line; do
+        pr_titles+=("$line")
+    done < <(echo "$prs_with_comments" | jq -r '.[].title')
+
+    while IFS= read -r line; do
+        pr_comment_counts+=("$line")
+    done < <(echo "$prs_with_comments" | jq -r '.[].comments | length')
+
+    local pr_count=${#pr_numbers[@]}
+
+    echo -e "  💬 Found ${pr_count} open PR(s) with comments"
+    echo ""
+    echo -e "📋 ${YELLOW}Open PRs with comments:${NC}"
+    echo ""
+
+    for i in "${!pr_numbers[@]}"; do
+        printf "  ${CYAN}%2d)${NC} #%-4s %s (💬 %s)\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}" "${pr_comment_counts[$i]}"
+    done
+    echo ""
+    printf "  ${CYAN}%2d)${NC} Skip — continue with workflow\n" "0"
+    echo ""
+
+    # Get user selection
+    local selection
+    while true; do
+        read -r -p "🔢 Select PR to view [0-${pr_count}]: " selection
+
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -le "$pr_count" ]; then
+            break
+        fi
+        echo -e "❌ ${RED}Invalid selection. Enter a number between 0 and ${pr_count}.${NC}"
+    done
+
+    # Skip — continue with normal workflow
+    if [ "$selection" -eq 0 ]; then
+        echo -e "  ℹ️  Skipping — continuing with workflow"
+        return 1
+    fi
+
+    local selected_pr=${pr_numbers[$((selection - 1))]}
+    local selected_title=${pr_titles[$((selection - 1))]}
+
+    # View the PR details using existing function
+    view_pr_details "$selected_pr"
+
+    # After viewing, offer close or exit options
+    echo ""
+    echo -e "📋 ${YELLOW}What would you like to do?${NC}"
+    echo ""
+    echo -e "  ${CYAN}1)${NC} 🔒 Close PR #${selected_pr} and exit"
+    echo -e "  ${CYAN}2)${NC} 👋 Exit without closing"
+    echo -e "  ${CYAN}3)${NC} ▶️  Continue with workflow"
+    echo ""
+
+    local action
+    while true; do
+        read -r -p "🔢 Choose action [1-3]: " action
+
+        case "$action" in
+            1)
+                close_pr "$selected_pr" "$selected_title"
+                echo ""
+                echo "╔══════════════════════════════════════════╗"
+                echo "║        👋 Goodbye! See you later!        ║"
+                echo "╚══════════════════════════════════════════╝"
+                return 0
+                ;;
+            2)
+                echo ""
+                echo "╔══════════════════════════════════════════╗"
+                echo "║        👋 Goodbye! See you later!        ║"
+                echo "╚══════════════════════════════════════════╝"
+                return 0
+                ;;
+            3)
+                echo -e "  ℹ️  Continuing with workflow"
+                return 1
+                ;;
+            *)
+                echo -e "❌ ${RED}Invalid choice. Enter 1, 2, or 3.${NC}"
+                ;;
+        esac
+    done
+}
+
 # PR Management Mode: select a PR and choose an action
 pr_management_mode() {
     echo ""
@@ -1655,6 +1778,13 @@ main() {
     if [ "$mode" != "pr_management" ]; then
         check_not_on_base_branch
         echo -e "  ✅ Not on base branch"
+    fi
+
+    # In pr_only mode, check for open PRs with comments before proceeding
+    if [ "$mode" = "pr_only" ]; then
+        if check_prs_with_comments; then
+            return
+        fi
     fi
 
     echo ""

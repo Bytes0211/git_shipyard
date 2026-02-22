@@ -8,6 +8,7 @@
 
 - 🚀 **One-command workflow** — Stage, commit, push, and create a PR in one go
 - 🧠 **Smart mode detection** — Automatically adapts to your repository state
+- 💬 **PR comment check** — In PR-only mode, surfaces open PRs with comments before proceeding
 - 🔍 **PR details & comments** — Read PR metadata, comment threads, and code reviews
 - ❌ **Close PRs** — Close pull requests without merging, with optional branch cleanup
 - 🔀 **Squash-merge PRs** — Merge, clean up branches, and reset your dev environment
@@ -117,6 +118,8 @@ Before any operation, Git Shipyard validates your environment:
 6. ✅ Authenticated with GitHub
 7. ✅ Remote `origin` is configured
 8. ✅ No unresolved merge in progress
+9. ✅ Not on base branch (Full & PR-only modes)
+10. 💬 Open PRs with comments check (PR-only mode)
 
 ### 🔀 Execution Modes
 
@@ -135,8 +138,10 @@ Stage All → Commit → Link to PR (opt.) → Push → Sync with Base → Link 
 > **Triggered when:** No uncommitted changes, but commits ahead of base
 
 ```
-Push → Sync with Base → Link Issue (opt.) → Create PR
+Check PRs with Comments (opt.) → Push → Sync with Base → Link Issue (opt.) → Create PR
 ```
+
+During pre-flight, if open PRs with comments are detected, you can review them before proceeding. After viewing a PR's details and comments, you can close it and exit, exit without closing, or continue with the normal workflow.
 
 #### 🔀 PR Management Mode
 
@@ -242,6 +247,29 @@ Goodbye!
 $ ./git-shipyard.sh
 
   ✓ Commits ahead of main (already committed)
+  ✓ Not on base branch
+
+Checking for open PRs with comments...
+  💬 Found 2 open PR(s) with comments
+
+Open PRs with comments:
+
+   1) #42   Add user authentication (💬 3)
+   2) #38   Fix database connection pooling (💬 1)
+   0) Skip — continue with workflow
+
+Select PR to view [0-2]: 1
+
+  (PR #42 details and comments displayed here...)
+
+What would you like to do?
+
+  1) Close PR #42 and exit
+  2) Exit without closing
+  3) Continue with workflow
+
+Choose action [1-3]: 3
+  ℹ  Continuing with workflow
 
 The following actions will be performed:
   1. Push to origin/dev (if needed)
@@ -250,6 +278,9 @@ The following actions will be performed:
 
 Proceed? (y/N): y
 ```
+
+> **Tip:** If no open PRs have comments, the check is silent and the workflow continues automatically.
+> You can also enter `0` to skip the PR review and proceed directly to the push/PR workflow.
 
 ### 🔵 Scenario 3: PR Management (action menu)
 
@@ -378,7 +409,77 @@ Summary:
   • Remote branch deleted
 ```
 
-### 🟣 Scenario 7: Custom branches with draft PR
+### 💬 Scenario 7: Reviewing & Closing a PR with Comments (PR-Only Mode)
+
+```
+$ ./git-shipyard.sh
+
+  ✓ Commits ahead of main (already committed)
+  ✓ Not on base branch
+
+Checking for open PRs with comments...
+  💬 Found 1 open PR(s) with comments
+
+Open PRs with comments:
+
+   1) #35   Refactor auth module (💬 2)
+   0) Skip — continue with workflow
+
+Select PR to view [0-1]: 1
+
+Fetching PR #35 details...
+─────────────────────────────────────────
+
+  Title:    Refactor auth module
+  State:    OPEN
+  Author:   octocat
+  Created:  2025-01-15
+  Branch:   refactor-auth → main
+  Changes:  +120 -45 (8 files)
+
+  Description:
+    Refactors the authentication module for clarity.
+
+─────────────────────────────────────────
+
+  💬 2 comment(s)
+
+  alice (2025-01-16):
+    This conflicts with the work in #42. Should we close this?
+
+  bob (2025-01-17):
+    Agreed — let's close it.
+
+─────────────────────────────────────────
+
+What would you like to do?
+
+  1) Close PR #35 and exit
+  2) Exit without closing
+  3) Continue with workflow
+
+Choose action [1-3]: 1
+
+Close PR #35: Refactor auth module?
+
+  ⚠  This will close the PR without merging.
+
+Also delete the remote branch? (y/N): y
+
+Proceed with closing? (y/N): y
+
+Closing PR #35...
+  ✓ PR #35 closed
+  ✓ Remote branch deleted
+
+╔════════════════════════════════════════╗
+║     🎉 PR closed successfully!         ║
+╚════════════════════════════════════════╝
+
+👋 Goodbye! See you later!
+```
+
+### 🟣 Scenario 8: Custom branches with draft PR
 
 ```bash
 ./git-shipyard.sh --base production --head hotfix-auth --draft
@@ -511,6 +612,7 @@ The test suite covers:
 
 - **Argument parsing** — `--base`, `--head`, `--draft`, `--help`, missing values, unknown flags
 - **Mode detection** — Full, PR-only, and PR management mode triggers
+- **PR comment check** — No PRs, PRs without comments, listing with comment counts, skip selection, view on selection, close and exit, exit without closing, continue with workflow, integration in pr_only mode, non-interactive skip, action menu options
 - **PR Management** — Action menu validation, PR selection, exit handling
 - **View PR details** — Metadata display, comment rendering, review state color-coding
 - **Close PR** — Cancellation, success/failure, branch deletion, summary
@@ -535,7 +637,7 @@ shellcheck git-shipyard.sh
 git_shipyard/
 ├── git-shipyard.sh          # The entire application (single file)
 ├── test/
-│   └── git-shipyard.bats    # BATS test suite (133 tests)
+│   └── git-shipyard.bats    # BATS test suite (145 tests)
 ├── CLAUDE.md                 # Claude Code guidance
 ├── README.md                 # You are here
 └── ...
@@ -552,6 +654,7 @@ git_shipyard/
 | `_create_issue_for_pr()` | Internal helper to create an issue and set it for PR linking |
 | `sync_with_base()` | Fetch + merge base branch into head before PR creation |
 | `check_merge_in_progress()` | Detect and resume in-progress merges from prior sync |
+| `check_prs_with_comments()` | Pre-flight check in PR-only mode; lists open PRs with comments, lets user view/close/exit |
 | `pr_management_mode()` | PR selection → action menu dispatch |
 | `view_pr_details()` | Display PR metadata, comments, and reviews |
 | `close_pr()` | Close PR without merging, optional branch cleanup |

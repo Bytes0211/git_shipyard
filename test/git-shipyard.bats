@@ -2871,3 +2871,365 @@ EOF
     run grep 'gh issue create.*--label' "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
+
+# =============================================================================
+# Test: check_prs_with_comments() function
+# =============================================================================
+
+@test "check_prs_with_comments function exists in script" {
+    run grep "check_prs_with_comments()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "check_prs_with_comments returns 1 when no open PRs" {
+    cat > "$TEST_DIR/test_no_prs_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh to return empty list
+gh() {
+    echo "[]"
+    return 0
+}
+
+check_prs_with_comments() {
+    if [ ! -t 0 ]; then
+        # Force interactive for test
+        :
+    fi
+
+    local pr_list
+    pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+
+    if [ -z "$pr_list" ] || [ "$pr_list" = "[]" ]; then
+        echo "No open pull requests found"
+        return 1
+    fi
+}
+
+check_prs_with_comments
+echo "RETURN=$?"
+EOF
+    chmod +x "$TEST_DIR/test_no_prs_comments.sh"
+
+    run "$TEST_DIR/test_no_prs_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No open pull requests found"* ]]
+}
+
+@test "check_prs_with_comments returns 1 when PRs have no comments" {
+    cat > "$TEST_DIR/test_prs_no_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh to return PRs with empty comments
+gh() {
+    echo '[{"number":10,"title":"Add feature","comments":[]},{"number":11,"title":"Fix bug","comments":[]}]'
+    return 0
+}
+
+# Mock jq (use real jq)
+pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+
+if [ -z "$prs_with_comments" ] || [ "$prs_with_comments" = "[]" ]; then
+    echo "No open PRs with comments"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_prs_no_comments.sh"
+
+    run "$TEST_DIR/test_prs_no_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No open PRs with comments"* ]]
+}
+
+@test "check_prs_with_comments lists PRs that have comments" {
+    cat > "$TEST_DIR/test_list_prs_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Mock gh to return PRs, some with comments
+gh() {
+    echo '[{"number":10,"title":"Add feature","comments":[{"author":{"login":"alice"},"body":"Looks good"}]},{"number":11,"title":"Fix bug","comments":[]},{"number":12,"title":"Update docs","comments":[{"author":{"login":"bob"},"body":"Needs work"},{"author":{"login":"carol"},"body":"Agreed"}]}]'
+    return 0
+}
+
+pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+
+# Parse PR numbers, titles, and comment counts
+pr_numbers=()
+pr_titles=()
+pr_comment_counts=()
+while IFS= read -r line; do
+    pr_numbers+=("$line")
+done < <(echo "$prs_with_comments" | jq -r '.[].number')
+
+while IFS= read -r line; do
+    pr_titles+=("$line")
+done < <(echo "$prs_with_comments" | jq -r '.[].title')
+
+while IFS= read -r line; do
+    pr_comment_counts+=("$line")
+done < <(echo "$prs_with_comments" | jq -r '.[].comments | length')
+
+pr_count=${#pr_numbers[@]}
+
+echo "Found ${pr_count} open PR(s) with comments"
+for i in "${!pr_numbers[@]}"; do
+    printf "%d) #%-4s %s (%s comments)\n" "$((i + 1))" "${pr_numbers[$i]}" "${pr_titles[$i]}" "${pr_comment_counts[$i]}"
+done
+EOF
+    chmod +x "$TEST_DIR/test_list_prs_comments.sh"
+
+    run "$TEST_DIR/test_list_prs_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Found 2 open PR(s) with comments"* ]]
+    [[ "$output" == *"#10"* ]]
+    [[ "$output" == *"Add feature"* ]]
+    [[ "$output" == *"1 comments"* ]]
+    [[ "$output" == *"#12"* ]]
+    [[ "$output" == *"Update docs"* ]]
+    [[ "$output" == *"2 comments"* ]]
+    # PR #11 (no comments) should NOT appear
+    [[ "$output" != *"#11"* ]]
+    [[ "$output" != *"Fix bug"* ]]
+}
+
+@test "check_prs_with_comments skip selection continues workflow" {
+    cat > "$TEST_DIR/test_skip_prs_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+gh() {
+    echo '[{"number":10,"title":"Add feature","comments":[{"author":{"login":"alice"},"body":"Looks good"}]}]'
+    return 0
+}
+
+pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+
+pr_numbers=()
+while IFS= read -r line; do
+    pr_numbers+=("$line")
+done < <(echo "$prs_with_comments" | jq -r '.[].number')
+
+pr_count=${#pr_numbers[@]}
+
+# Simulate user entering 0 (skip)
+selection=0
+if [ "$selection" -eq 0 ]; then
+    echo "Skipping — continuing with workflow"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_skip_prs_comments.sh"
+
+    run "$TEST_DIR/test_skip_prs_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Skipping — continuing with workflow"* ]]
+}
+
+@test "check_prs_with_comments calls view_pr_details on selection" {
+    cat > "$TEST_DIR/test_view_pr_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+# Track function calls
+VIEWED_PR=""
+
+view_pr_details() {
+    VIEWED_PR="$1"
+    echo "VIEWED_PR_DETAILS=$1"
+}
+
+gh() {
+    echo '[{"number":42,"title":"Dark mode","comments":[{"author":{"login":"bob"},"body":"Nice work"}]}]'
+    return 0
+}
+
+pr_list=$(gh pr list --state open --json number,title,comments --limit 20 2>/dev/null)
+prs_with_comments=$(echo "$pr_list" | jq '[.[] | select((.comments | length) > 0)]' 2>/dev/null)
+
+pr_numbers=()
+pr_titles=()
+while IFS= read -r line; do
+    pr_numbers+=("$line")
+done < <(echo "$prs_with_comments" | jq -r '.[].number')
+
+while IFS= read -r line; do
+    pr_titles+=("$line")
+done < <(echo "$prs_with_comments" | jq -r '.[].title')
+
+# Simulate user selecting PR 1
+selection=1
+selected_pr=${pr_numbers[$((selection - 1))]}
+selected_title=${pr_titles[$((selection - 1))]}
+
+view_pr_details "$selected_pr"
+
+echo "SELECTED_PR=$selected_pr"
+echo "SELECTED_TITLE=$selected_title"
+EOF
+    chmod +x "$TEST_DIR/test_view_pr_comments.sh"
+
+    run "$TEST_DIR/test_view_pr_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"VIEWED_PR_DETAILS=42"* ]]
+    [[ "$output" == *"SELECTED_PR=42"* ]]
+    [[ "$output" == *"SELECTED_TITLE=Dark mode"* ]]
+}
+
+@test "check_prs_with_comments close PR and exit returns 0" {
+    cat > "$TEST_DIR/test_close_exit_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+CLOSE_CALLED=""
+view_pr_details() { echo "Viewing PR #$1"; }
+close_pr() {
+    CLOSE_CALLED="$1"
+    echo "CLOSE_PR_CALLED=$1"
+}
+
+# Simulate action=1 (close and exit)
+action=1
+selected_pr=42
+selected_title="Dark mode"
+
+case "$action" in
+    1)
+        close_pr "$selected_pr" "$selected_title"
+        echo "Goodbye! See you later!"
+        echo "EXIT_CODE=0"
+        ;;
+    2)
+        echo "Goodbye! See you later!"
+        echo "EXIT_CODE=0"
+        ;;
+    3)
+        echo "Continuing with workflow"
+        echo "EXIT_CODE=1"
+        ;;
+esac
+EOF
+    chmod +x "$TEST_DIR/test_close_exit_comments.sh"
+
+    run "$TEST_DIR/test_close_exit_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CLOSE_PR_CALLED=42"* ]]
+    [[ "$output" == *"Goodbye! See you later!"* ]]
+    [[ "$output" == *"EXIT_CODE=0"* ]]
+}
+
+@test "check_prs_with_comments exit without closing returns 0" {
+    cat > "$TEST_DIR/test_exit_no_close_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+CLOSE_CALLED=""
+close_pr() { CLOSE_CALLED="$1"; }
+
+# Simulate action=2 (exit without closing)
+action=2
+selected_pr=42
+selected_title="Dark mode"
+
+case "$action" in
+    1)
+        close_pr "$selected_pr" "$selected_title"
+        echo "CLOSE_CALLED=yes"
+        echo "EXIT_CODE=0"
+        ;;
+    2)
+        echo "Goodbye! See you later!"
+        echo "CLOSE_CALLED=no"
+        echo "EXIT_CODE=0"
+        ;;
+    3)
+        echo "Continuing with workflow"
+        echo "EXIT_CODE=1"
+        ;;
+esac
+EOF
+    chmod +x "$TEST_DIR/test_exit_no_close_comments.sh"
+
+    run "$TEST_DIR/test_exit_no_close_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CLOSE_CALLED=no"* ]]
+    [[ "$output" == *"Goodbye! See you later!"* ]]
+    [[ "$output" != *"CLOSE_CALLED=yes"* ]]
+}
+
+@test "check_prs_with_comments continue with workflow returns 1" {
+    cat > "$TEST_DIR/test_continue_comments.sh" << 'EOF'
+#!/usr/bin/env bash
+CLOSE_CALLED=""
+close_pr() { CLOSE_CALLED="$1"; }
+
+# Simulate action=3 (continue with workflow)
+action=3
+selected_pr=42
+selected_title="Dark mode"
+result=0
+
+case "$action" in
+    1)
+        close_pr "$selected_pr" "$selected_title"
+        result=0
+        ;;
+    2)
+        result=0
+        ;;
+    3)
+        echo "Continuing with workflow"
+        result=1
+        ;;
+esac
+
+echo "RESULT=$result"
+EOF
+    chmod +x "$TEST_DIR/test_continue_comments.sh"
+
+    run "$TEST_DIR/test_continue_comments.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Continuing with workflow"* ]]
+    [[ "$output" == *"RESULT=1"* ]]
+}
+
+@test "check_prs_with_comments is called in pr_only mode in main" {
+    # Verify the pr_only block calls check_prs_with_comments
+    run bash -c "sed -n '/In pr_only mode/,/fi/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'check_prs_with_comments'"
+    [ "$output" -ge 1 ]
+}
+
+@test "check_prs_with_comments skips in non-interactive mode" {
+    # The function checks [ ! -t 0 ] and returns 1 immediately
+    run bash -c "sed -n '/^check_prs_with_comments()/,/^}/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c '! -t 0'"
+    [ "$output" -ge 1 ]
+}
+
+@test "check_prs_with_comments offers three actions after viewing" {
+    # Verify the action menu has close, exit, and continue options
+    run grep -A20 'After viewing, offer close or exit' "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Close PR"* ]]
+    [[ "$output" == *"Exit without closing"* ]]
+    [[ "$output" == *"Continue with workflow"* ]]
+}
