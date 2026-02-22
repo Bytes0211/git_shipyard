@@ -461,6 +461,88 @@ create_github_issue() {
     return 0
 }
 
+# Check if a merge is in progress from a previous pre-PR sync attempt
+# Called early in main() before mode detection to intercept MERGE_HEAD state
+check_merge_in_progress() {
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null)
+
+    # No merge in progress — nothing to do
+    [ -f "${git_dir}/MERGE_HEAD" ] || return 0
+
+    # Check for unresolved conflicts
+    local unresolved
+    unresolved=$(git diff --name-only --diff-filter=U 2>/dev/null)
+
+    if [ -n "$unresolved" ]; then
+        echo -e "${RED}A merge is in progress with unresolved conflicts:${NC}"
+        echo ""
+        while IFS= read -r file; do
+            echo -e "  ${RED}•${NC} $file"
+        done <<< "$unresolved"
+        echo ""
+        echo -e "${YELLOW}To continue:${NC}"
+        echo -e "  1. Resolve the conflicts in the files listed above"
+        echo -e "  2. Run: git add <resolved-file>"
+        echo -e "  3. Re-run git-shipyard"
+        echo ""
+        error_exit "Resolve merge conflicts before continuing."
+    fi
+
+    # All conflicts resolved — complete the merge
+    echo -e "${BLUE}Completing merge after conflict resolution...${NC}"
+    if ! git commit --no-edit; then
+        error_exit "Failed to complete merge commit."
+    fi
+    echo -e "  ${GREEN}✓${NC} Merge committed — ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+    echo ""
+}
+
+# Sync HEAD_BRANCH with BASE_BRANCH before creating a PR
+# Fetches latest base, merges it in; on conflict lists files and exits with instructions
+sync_with_base() {
+    echo ""
+    echo -e "${BLUE}Syncing ${HEAD_BRANCH} with ${BASE_BRANCH} before PR...${NC}"
+
+    # Fetch latest base branch from remote
+    if ! git fetch origin "${BASE_BRANCH}" 2>/dev/null; then
+        echo -e "  ${YELLOW}⚠${NC}  Could not fetch ${BASE_BRANCH} — skipping sync"
+        return 0
+    fi
+
+    # Check if head already contains all base commits (already up to date)
+    if git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD 2>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+        return 0
+    fi
+
+    # Merge base into head to catch any new changes
+    echo -e "${BLUE}Merging origin/${BASE_BRANCH} into ${HEAD_BRANCH}...${NC}"
+    if ! git merge --no-ff "origin/${BASE_BRANCH}" 2>/dev/null; then
+        # Collect conflicting files
+        local conflict_files
+        conflict_files=$(git diff --name-only --diff-filter=U 2>/dev/null)
+
+        echo -e "  ${RED}✗${NC} Merge conflict with ${BASE_BRANCH}"
+        echo ""
+        echo -e "${YELLOW}Conflicting files:${NC}"
+        if [ -n "$conflict_files" ]; then
+            while IFS= read -r file; do
+                echo -e "  ${RED}•${NC} $file"
+            done <<< "$conflict_files"
+        fi
+        echo ""
+        echo -e "${YELLOW}To resolve:${NC}"
+        echo -e "  1. Resolve the conflicts in the files listed above"
+        echo -e "  2. Run: git add <resolved-file>"
+        echo -e "  3. Re-run git-shipyard to continue"
+        echo ""
+        error_exit "Merge conflicts must be resolved before creating a PR."
+    fi
+
+    echo -e "  ${GREEN}✓${NC} ${HEAD_BRANCH} is up to date with ${BASE_BRANCH}"
+}
+
 # PR Management Mode: list open PRs and let user squash-merge one
 pr_management_mode() {
     echo ""
@@ -632,7 +714,10 @@ main() {
     
     check_remote
     echo -e "  ${GREEN}✓${NC} Remote 'origin' configured"
-    
+
+    # Check for an in-progress merge from a prior sync attempt (before mode detection)
+    check_merge_in_progress
+
     # Determine workflow mode
     local mode=""
     if has_uncommitted_changes; then
@@ -686,12 +771,14 @@ main() {
         echo -e "  1. Stage all changes (git add .)"
         echo -e "  2. Commit with message: ${CYAN}\"$message_preview\"${NC}"
         echo -e "  3. Push to origin/${HEAD_BRANCH}"
-        echo -e "  4. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
+        echo -e "  4. Sync with ${BASE_BRANCH} (merge any new changes)"
+        echo -e "  5. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
     else
         # PR only mode
         echo -e "${BLUE}The following actions will be performed:${NC}"
         echo -e "  1. Push to origin/${HEAD_BRANCH} (if needed)"
-        echo -e "  2. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
+        echo -e "  2. Sync with ${BASE_BRANCH} (merge any new changes)"
+        echo -e "  3. Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
     fi
     
     echo ""
@@ -762,7 +849,10 @@ main() {
             echo -e "  ${GREEN}✓${NC} Pushed to origin/${HEAD_BRANCH}"
         fi
     fi
-    
+
+    # Pre-PR sync: merge base branch into head to ensure a clean merge
+    sync_with_base
+
     # Offer to link an issue to the PR
     select_issue || true
     

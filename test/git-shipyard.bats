@@ -1274,3 +1274,360 @@ EOF
     run grep 'branch_deleted.*=.*true' "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
+
+# =============================================================================
+# Test 15: sync_with_base() function (F4)
+# =============================================================================
+
+@test "sync_with_base function exists in script" {
+    run grep "sync_with_base()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "sync_with_base is called in main workflow" {
+    run grep "sync_with_base" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    # Should appear at least twice: definition and call site
+    local count
+    count=$(grep -c "sync_with_base" "$SCRIPT_DIR/git-shipyard.sh")
+    [ "$count" -ge 2 ]
+}
+
+@test "sync_with_base shows up to date message when already in sync" {
+    cat > "$TEST_DIR/test_sync_uptodate.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Mock git: fetch succeeds, merge-base says already ancestor (up to date)
+git() {
+    if [ "\$1" = "fetch" ]; then return 0; fi
+    if [ "\$1" = "merge-base" ] && [ "\$2" = "--is-ancestor" ]; then return 0; fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+run_result=\$(sync_with_base)
+echo "\$run_result"
+EOF
+    chmod +x "$TEST_DIR/test_sync_uptodate.sh"
+
+    run "$TEST_DIR/test_sync_uptodate.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"up to date"* ]]
+}
+
+@test "sync_with_base shows success after clean merge" {
+    cat > "$TEST_DIR/test_sync_clean.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Mock git: fetch succeeds, not ancestor yet, merge succeeds
+git() {
+    if [ "\$1" = "fetch" ]; then return 0; fi
+    if [ "\$1" = "merge-base" ] && [ "\$2" = "--is-ancestor" ]; then return 1; fi
+    if [ "\$1" = "merge" ]; then return 0; fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+run_result=\$(sync_with_base)
+echo "\$run_result"
+EOF
+    chmod +x "$TEST_DIR/test_sync_clean.sh"
+
+    run "$TEST_DIR/test_sync_clean.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"up to date"* ]]
+}
+
+@test "sync_with_base skips gracefully when fetch fails" {
+    cat > "$TEST_DIR/test_sync_fetch_fail.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Mock git: fetch fails
+git() {
+    if [ "\$1" = "fetch" ]; then return 1; fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+run_result=\$(sync_with_base)
+status=\$?
+echo "\$run_result"
+exit \$status
+EOF
+    chmod +x "$TEST_DIR/test_sync_fetch_fail.sh"
+
+    run "$TEST_DIR/test_sync_fetch_fail.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipping sync"* ]]
+}
+
+@test "sync_with_base exits with error on conflict" {
+    cat > "$TEST_DIR/test_sync_conflict_exit.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Mock git: fetch succeeds, not ancestor, merge fails (conflict)
+git() {
+    if [ "\$1" = "fetch" ]; then return 0; fi
+    if [ "\$1" = "merge-base" ] && [ "\$2" = "--is-ancestor" ]; then return 1; fi
+    if [ "\$1" = "merge" ]; then return 1; fi
+    if [ "\$1" = "diff" ]; then echo "src/app.js"; return 0; fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+sync_with_base
+EOF
+    chmod +x "$TEST_DIR/test_sync_conflict_exit.sh"
+
+    run "$TEST_DIR/test_sync_conflict_exit.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Error"* ]] || [[ "$output" == *"conflict"* ]]
+}
+
+@test "sync_with_base lists conflicting files on conflict" {
+    cat > "$TEST_DIR/test_sync_conflict_files.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Mock git: fetch succeeds, not ancestor, merge fails, diff shows conflict files
+git() {
+    if [ "\$1" = "fetch" ]; then return 0; fi
+    if [ "\$1" = "merge-base" ] && [ "\$2" = "--is-ancestor" ]; then return 1; fi
+    if [ "\$1" = "merge" ]; then return 1; fi
+    if [ "\$1" = "diff" ]; then printf "src/app.js\nREADME.md\n"; return 0; fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+sync_with_base 2>&1 || true
+EOF
+    chmod +x "$TEST_DIR/test_sync_conflict_files.sh"
+
+    run "$TEST_DIR/test_sync_conflict_files.sh"
+    [[ "$output" == *"src/app.js"* ]]
+    [[ "$output" == *"README.md"* ]]
+}
+
+@test "sync_with_base provides resolution instructions on conflict" {
+    cat > "$TEST_DIR/test_sync_conflict_instructions.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+git() {
+    if [ "\$1" = "fetch" ]; then return 0; fi
+    if [ "\$1" = "merge-base" ] && [ "\$2" = "--is-ancestor" ]; then return 1; fi
+    if [ "\$1" = "merge" ]; then return 1; fi
+    if [ "\$1" = "diff" ]; then echo "conflict.txt"; return 0; fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+sync_with_base 2>&1 || true
+EOF
+    chmod +x "$TEST_DIR/test_sync_conflict_instructions.sh"
+
+    run "$TEST_DIR/test_sync_conflict_instructions.sh"
+    [[ "$output" == *"git add"* ]]
+    [[ "$output" == *"Re-run git-shipyard"* ]] || [[ "$output" == *"re-run"* ]]
+}
+
+@test "sync_with_base is called after push in main" {
+    # Verify sync_with_base call appears after the git push commands
+    local push_line sync_line
+    push_line=$(grep -n 'git push' "$SCRIPT_DIR/git-shipyard.sh" | tail -1 | cut -d: -f1)
+    sync_line=$(grep -nE '^[[:space:]]+sync_with_base[[:space:]]*$' "$SCRIPT_DIR/git-shipyard.sh" | head -1 | cut -d: -f1)
+    [ -n "$push_line" ]
+    [ -n "$sync_line" ]
+    [ "$sync_line" -gt "$push_line" ]
+}
+
+@test "sync step appears in full mode actions list" {
+    run grep "Sync with" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+    local count
+    count=$(grep -c "Sync with" "$SCRIPT_DIR/git-shipyard.sh")
+    [ "$count" -ge 2 ]
+}
+
+# =============================================================================
+# Test 16: check_merge_in_progress() function (F4)
+# =============================================================================
+
+@test "check_merge_in_progress function exists in script" {
+    run grep "check_merge_in_progress()" "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "check_merge_in_progress returns zero when no merge in progress" {
+    cat > "$TEST_DIR/test_merge_check_clean.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Create a temp git repo with no MERGE_HEAD
+tmp_repo=\$(mktemp -d)
+git init --quiet "\$tmp_repo"
+cd "\$tmp_repo"
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+check_merge_in_progress
+echo "EXIT=\$?"
+EOF
+    chmod +x "$TEST_DIR/test_merge_check_clean.sh"
+
+    run "$TEST_DIR/test_merge_check_clean.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"EXIT=0"* ]]
+}
+
+@test "check_merge_in_progress errors when unresolved conflicts exist" {
+    cat > "$TEST_DIR/test_merge_check_unresolved.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Create a temp git repo and simulate MERGE_HEAD with unresolved conflicts
+tmp_repo=\$(mktemp -d)
+git init --quiet "\$tmp_repo"
+cd "\$tmp_repo"
+# Create MERGE_HEAD to simulate in-progress merge
+echo "deadbeef" > "\$(git rev-parse --git-dir)/MERGE_HEAD"
+
+# Override git diff to simulate unresolved conflicts
+git() {
+    if [ "\$1" = "diff" ] && [ "\$2" = "--name-only" ]; then
+        echo "conflicted.txt"
+        return 0
+    fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+check_merge_in_progress
+EOF
+    chmod +x "$TEST_DIR/test_merge_check_unresolved.sh"
+
+    run "$TEST_DIR/test_merge_check_unresolved.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"conflict"* ]] || [[ "$output" == *"unresolved"* ]] || [[ "$output" == *"Error"* ]]
+}
+
+@test "check_merge_in_progress lists conflicting files" {
+    cat > "$TEST_DIR/test_merge_check_list.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+tmp_repo=\$(mktemp -d)
+git init --quiet "\$tmp_repo"
+cd "\$tmp_repo"
+echo "deadbeef" > "\$(git rev-parse --git-dir)/MERGE_HEAD"
+
+git() {
+    if [ "\$1" = "diff" ] && [ "\$2" = "--name-only" ]; then
+        printf "src/main.go\nconfig.yaml\n"
+        return 0
+    fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+check_merge_in_progress 2>&1 || true
+EOF
+    chmod +x "$TEST_DIR/test_merge_check_list.sh"
+
+    run "$TEST_DIR/test_merge_check_list.sh"
+    [[ "$output" == *"src/main.go"* ]]
+    [[ "$output" == *"config.yaml"* ]]
+}
+
+@test "check_merge_in_progress is called in main before mode detection" {
+    # Verify check_merge_in_progress call appears before mode detection
+    local check_line mode_line
+    check_line=$(grep -n 'check_merge_in_progress' "$SCRIPT_DIR/git-shipyard.sh" | grep -v '^[^:]*:.*()' | head -1 | cut -d: -f1)
+    mode_line=$(grep -n 'Determine workflow mode' "$SCRIPT_DIR/git-shipyard.sh" | head -1 | cut -d: -f1)
+    [ -n "$check_line" ]
+    [ -n "$mode_line" ]
+    [ "$check_line" -lt "$mode_line" ]
+}
