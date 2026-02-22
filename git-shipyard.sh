@@ -563,6 +563,48 @@ sync_with_base() {
     SYNC_RESULT="synced"
 }
 
+# Reset local dev environment: pull latest base branch, recreate head branch
+reset_dev_environment() {
+    echo ""
+    echo -e "${BLUE}Resetting local ${HEAD_BRANCH} environment...${NC}"
+
+    local current_branch
+    current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+    # Switch to base branch if not already on it
+    if [ "$current_branch" != "$BASE_BRANCH" ]; then
+        echo -e "${BLUE}Switching to ${BASE_BRANCH}...${NC}"
+        if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
+            error_exit "Could not switch to ${BASE_BRANCH}."
+        fi
+        echo -e "  ${GREEN}✓${NC} Switched to ${BASE_BRANCH}"
+    fi
+
+    # Pull latest base branch
+    echo -e "${BLUE}Pulling latest ${BASE_BRANCH}...${NC}"
+    if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
+        echo -e "  ${YELLOW}⚠${NC}  Could not pull latest ${BASE_BRANCH}"
+    else
+        echo -e "  ${GREEN}✓${NC} ${BASE_BRANCH} is up to date"
+    fi
+
+    # Delete local head branch if it exists
+    if git show-ref --verify --quiet "refs/heads/$HEAD_BRANCH"; then
+        echo -e "${BLUE}Deleting local branch '${HEAD_BRANCH}'...${NC}"
+        if ! git branch -D "$HEAD_BRANCH" 2>/dev/null; then
+            error_exit "Could not delete local branch '${HEAD_BRANCH}'."
+        fi
+        echo -e "  ${GREEN}✓${NC} Local branch '${HEAD_BRANCH}' deleted"
+    fi
+
+    # Create fresh head branch from base
+    echo -e "${BLUE}Creating fresh ${HEAD_BRANCH} from ${BASE_BRANCH}...${NC}"
+    if ! git checkout -b "$HEAD_BRANCH" 2>/dev/null; then
+        error_exit "Could not create branch '${HEAD_BRANCH}'."
+    fi
+    echo -e "  ${GREEN}✓${NC} Fresh ${HEAD_BRANCH} created from ${BASE_BRANCH}"
+}
+
 # PR Management Mode:
 pr_management_mode() {
     echo ""
@@ -763,6 +805,7 @@ main() {
     echo ""
 
     if [ "$mode" = "pr_management" ]; then
+        reset_dev_environment
         pr_management_mode
         return
     fi
