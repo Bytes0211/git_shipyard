@@ -1492,6 +1492,40 @@ EOF
     [[ "$output" == *"Re-run git-shipyard"* ]] || [[ "$output" == *"re-run"* ]]
 }
 
+@test "sync_with_base pushes merge commit after clean merge" {
+    cat > "$TEST_DIR/test_sync_push.sh" << EOF
+#!/usr/bin/env bash
+BLUE='\\033[0;34m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+RED='\\033[0;31m'
+NC='\\033[0m'
+BASE_BRANCH="main"
+HEAD_BRANCH="dev"
+
+error_exit() { echo "Error: \$1" >&2; exit 1; }
+
+# Mock git: fetch succeeds, not ancestor, merge succeeds, push succeeds
+git() {
+    if [ "\$1" = "fetch" ]; then return 0; fi
+    if [ "\$1" = "merge-base" ] && [ "\$2" = "--is-ancestor" ]; then return 1; fi
+    if [ "\$1" = "merge" ]; then return 0; fi
+    if [ "\$1" = "push" ]; then echo "PUSHED"; return 0; fi
+    /usr/bin/git "\$@"
+}
+export -f git
+
+source "$SCRIPT_DIR/git-shipyard.sh"
+sync_with_base
+EOF
+    chmod +x "$TEST_DIR/test_sync_push.sh"
+
+    run "$TEST_DIR/test_sync_push.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PUSHED"* ]]
+    [[ "$output" == *"Merge commit pushed to remote"* ]]
+}
+
 @test "sync_with_base is called after push in main" {
     # Verify sync_with_base call appears after the git push commands
     local push_line sync_line
