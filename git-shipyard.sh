@@ -1619,29 +1619,43 @@ prompt_issue_creation() {
         esac
     done
 
-    # Collect issue type
+    # Collect issue label from repository
     echo ""
-    echo -e "🏷️  ${YELLOW}Select issue type:${NC}"
-    echo -e "  ${CYAN}1)${NC} enhancement"
-    echo -e "  ${CYAN}2)${NC} bug"
-    echo -e "  ${CYAN}3)${NC} feature"
-    echo -e "  ${CYAN}4)${NC} docs"
-    echo -e "  ${CYAN}5)${NC} refactor"
-    echo ""
+    echo -e "📡 ${BLUE}Fetching repository labels...${NC}"
+    local label_list
+    label_list=$(gh label list --json name --jq '.[].name' --limit 50 2>/dev/null | sort)
 
-    local type_selection
-    local issue_type
-    while true; do
-        read -r -p "🔢 Choose (1-5): " type_selection
-        case $type_selection in
-            1) issue_type="enhancement"; break ;;
-            2) issue_type="bug"; break ;;
-            3) issue_type="feature"; break ;;
-            4) issue_type="docs"; break ;;
-            5) issue_type="refactor"; break ;;
-            *) echo -e "❌ ${RED}Invalid choice. Enter a number between 1 and 5.${NC}" ;;
-        esac
-    done
+    local issue_label=""
+    if [ -z "$label_list" ]; then
+        echo -e "  ℹ️  No labels found in repository — skipping label"
+    else
+        echo -e "🏷️  ${YELLOW}Select a label (optional):${NC}"
+
+        local -a labels=()
+        local i=1
+        while IFS= read -r lbl; do
+            labels+=("$lbl")
+            echo -e "  ${CYAN}${i})${NC} ${lbl}"
+            ((i++))
+        done <<< "$label_list"
+
+        local label_count=${#labels[@]}
+        echo -e "  ${CYAN}$((label_count + 1)))${NC} Skip (no label)"
+        echo ""
+
+        local label_selection
+        while true; do
+            read -r -p "🔢 Choose (1-$((label_count + 1))): " label_selection
+            if [[ "$label_selection" =~ ^[0-9]+$ ]] && [ "$label_selection" -ge 1 ] && [ "$label_selection" -le $((label_count + 1)) ]; then
+                if [ "$label_selection" -le "$label_count" ]; then
+                    issue_label="${labels[$((label_selection - 1))]}"
+                fi
+                break
+            else
+                echo -e "❌ ${RED}Invalid choice. Enter a number between 1 and $((label_count + 1)).${NC}"
+            fi
+        done
+    fi
 
     # Build issue body from template
     local template_file="$HOME/.config/issue-template.md"
@@ -1681,7 +1695,11 @@ ${overview}
     echo ""
     echo -e "🌱 ${BLUE}Creating GitHub issue...${NC}"
     local issue_output
-    if ! issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" --label "$issue_type" 2>&1); then
+    local -a issue_cmd=(gh issue create --title "$issue_title" --body "$issue_body")
+    if [ -n "$issue_label" ]; then
+        issue_cmd+=(--label "$issue_label")
+    fi
+    if ! issue_output=$("${issue_cmd[@]}" 2>&1); then
         echo -e "  ❌ Failed to create issue"
         echo "$issue_output" >&2
         return 1

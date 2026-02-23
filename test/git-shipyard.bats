@@ -2676,37 +2676,136 @@ EOF
     [[ "$output" == *"Skipping issue creation (empty title)"* ]]
 }
 
-@test "prompt_issue_creation type menu maps correctly" {
-    cat > "$TEST_DIR/test_prompt_issue_types.sh" << 'EOF'
+@test "prompt_issue_creation label menu fetches from repo and maps selection" {
+    cat > "$TEST_DIR/test_prompt_issue_labels.sh" << 'EOF'
 #!/usr/bin/env bash
-map_type() {
-    case $1 in
-        1) echo "enhancement" ;;
-        2) echo "bug" ;;
-        3) echo "feature" ;;
-        4) echo "docs" ;;
-        5) echo "refactor" ;;
-        *) echo "INVALID" ;;
-    esac
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Mock gh to return repo labels
+gh() {
+    if [[ "$1" == "label" && "$2" == "list" ]]; then
+        printf "bug\nenhancement\nquestion\n"
+        return 0
+    fi
+    return 1
 }
 
-for i in 1 2 3 4 5 6; do
-    echo "INPUT=$i TYPE=$(map_type $i)"
-done
+echo -e "📡 ${BLUE}Fetching repository labels...${NC}"
+label_list=$(gh label list --json name --jq '.[].name' --limit 50 2>/dev/null | sort)
+
+issue_label=""
+if [ -z "$label_list" ]; then
+    echo "NO_LABELS"
+else
+    local -a labels=()
+    local i=1
+    while IFS= read -r lbl; do
+        labels+=("$lbl")
+        echo -e "  ${CYAN}${i})${NC} ${lbl}"
+        ((i++))
+    done <<< "$label_list"
+
+    label_count=${#labels[@]}
+
+    # Simulate selecting option 2
+    label_selection=2
+    if [ "$label_selection" -le "$label_count" ]; then
+        issue_label="${labels[$((label_selection - 1))]}"
+    fi
+fi
+
+echo "LABEL=$issue_label"
+echo "COUNT=${#labels[@]}"
 EOF
-    chmod +x "$TEST_DIR/test_prompt_issue_types.sh"
+    chmod +x "$TEST_DIR/test_prompt_issue_labels.sh"
 
-    run "$TEST_DIR/test_prompt_issue_types.sh"
+    run "$TEST_DIR/test_prompt_issue_labels.sh"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"INPUT=1 TYPE=enhancement"* ]]
-    [[ "$output" == *"INPUT=2 TYPE=bug"* ]]
-    [[ "$output" == *"INPUT=3 TYPE=feature"* ]]
-    [[ "$output" == *"INPUT=4 TYPE=docs"* ]]
-    [[ "$output" == *"INPUT=5 TYPE=refactor"* ]]
-    [[ "$output" == *"INPUT=6 TYPE=INVALID"* ]]
+    [[ "$output" == *"bug"* ]]
+    [[ "$output" == *"enhancement"* ]]
+    [[ "$output" == *"question"* ]]
+    [[ "$output" == *"LABEL=enhancement"* ]]
+    [[ "$output" == *"COUNT=3"* ]]
 }
 
-@test "prompt_issue_creation creates issue successfully (mocked)" {
+@test "prompt_issue_creation label menu skip option selects no label" {
+    cat > "$TEST_DIR/test_prompt_issue_label_skip.sh" << 'EOF'
+#!/usr/bin/env bash
+
+# Mock gh to return repo labels
+gh() {
+    if [[ "$1" == "label" && "$2" == "list" ]]; then
+        printf "bug\nenhancement\n"
+        return 0
+    fi
+    return 1
+}
+
+label_list=$(gh label list --json name --jq '.[].name' --limit 50 2>/dev/null | sort)
+
+issue_label=""
+local -a labels=()
+while IFS= read -r lbl; do
+    labels+=("$lbl")
+done <<< "$label_list"
+
+label_count=${#labels[@]}
+
+# Simulate selecting the skip option (label_count + 1)
+label_selection=$((label_count + 1))
+if [[ "$label_selection" =~ ^[0-9]+$ ]] && [ "$label_selection" -ge 1 ] && [ "$label_selection" -le $((label_count + 1)) ]; then
+    if [ "$label_selection" -le "$label_count" ]; then
+        issue_label="${labels[$((label_selection - 1))]}"
+    fi
+fi
+
+echo "LABEL=$issue_label"
+echo "EMPTY=$([ -z "$issue_label" ] && echo "yes" || echo "no")"
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_label_skip.sh"
+
+    run "$TEST_DIR/test_prompt_issue_label_skip.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LABEL="* ]]
+    [[ "$output" == *"EMPTY=yes"* ]]
+}
+
+@test "prompt_issue_creation skips label when repo has no labels" {
+    cat > "$TEST_DIR/test_prompt_issue_no_labels.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Mock gh to return no labels
+gh() {
+    if [[ "$1" == "label" && "$2" == "list" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+echo -e "📡 ${BLUE}Fetching repository labels...${NC}"
+label_list=$(gh label list --json name --jq '.[].name' --limit 50 2>/dev/null | sort)
+
+issue_label=""
+if [ -z "$label_list" ]; then
+    echo "NO_LABELS_FOUND"
+fi
+
+echo "LABEL=$issue_label"
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_no_labels.sh"
+
+    run "$TEST_DIR/test_prompt_issue_no_labels.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NO_LABELS_FOUND"* ]]
+    [[ "$output" == *"LABEL="* ]]
+}
+
+@test "prompt_issue_creation creates issue successfully with label (mocked)" {
     cat > "$TEST_DIR/test_prompt_issue_success.sh" << 'EOF'
 #!/usr/bin/env bash
 GREEN='\033[0;32m'
@@ -2715,16 +2814,27 @@ NC='\033[0m'
 
 # Mock gh
 gh() {
-    echo "https://github.com/owner/repo/issues/99"
-    return 0
+    if [[ "$1" == "label" && "$2" == "list" ]]; then
+        printf "bug\nfeature\nquestion\n"
+        return 0
+    fi
+    if [[ "$1" == "issue" && "$2" == "create" ]]; then
+        echo "https://github.com/owner/repo/issues/99"
+        return 0
+    fi
+    return 1
 }
 
 issue_title="Add dark mode"
 issue_body="## Overview\n\nAdd dark mode support"
-issue_type="feature"
+issue_label="feature"
 
 echo -e "${BLUE}Creating GitHub issue...${NC}"
-issue_output=$(gh issue create --title "$issue_title" --body "$issue_body" --label "$issue_type" 2>&1)
+local -a issue_cmd=(gh issue create --title "$issue_title" --body "$issue_body")
+if [ -n "$issue_label" ]; then
+    issue_cmd+=(--label "$issue_label")
+fi
+issue_output=$("${issue_cmd[@]}" 2>&1)
 issue_number=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
 echo -e "  ${GREEN}✓${NC} Issue #${issue_number} created: ${issue_title}"
 echo "NUMBER=$issue_number"
@@ -2737,21 +2847,74 @@ EOF
     [[ "$output" == *"NUMBER=99"* ]]
 }
 
-@test "prompt_issue_creation handles gh failure" {
+@test "prompt_issue_creation creates issue without label when skipped" {
+    cat > "$TEST_DIR/test_prompt_issue_no_label.sh" << 'EOF'
+#!/usr/bin/env bash
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+RECEIVED_ARGS=""
+
+# Mock gh
+gh() {
+    if [[ "$1" == "issue" && "$2" == "create" ]]; then
+        RECEIVED_ARGS="$*"
+        echo "https://github.com/owner/repo/issues/42"
+        return 0
+    fi
+    return 1
+}
+
+issue_title="Fix something"
+issue_body="## Overview\n\nFix it"
+issue_label=""
+
+echo -e "${BLUE}Creating GitHub issue...${NC}"
+local -a issue_cmd=(gh issue create --title "$issue_title" --body "$issue_body")
+if [ -n "$issue_label" ]; then
+    issue_cmd+=(--label "$issue_label")
+fi
+issue_output=$("${issue_cmd[@]}" 2>&1)
+issue_number=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+echo -e "  ${GREEN}✓${NC} Issue #${issue_number} created: ${issue_title}"
+echo "NUMBER=$issue_number"
+echo "HAS_LABEL_FLAG=$(echo "${issue_cmd[*]}" | grep -c '\-\-label')"
+EOF
+    chmod +x "$TEST_DIR/test_prompt_issue_no_label.sh"
+
+    run "$TEST_DIR/test_prompt_issue_no_label.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Issue #42 created: Fix something"* ]]
+    [[ "$output" == *"NUMBER=42"* ]]
+    [[ "$output" == *"HAS_LABEL_FLAG=0"* ]]
+}
+
+@test "prompt_issue_creation handles gh issue create failure" {
     cat > "$TEST_DIR/test_prompt_issue_fail.sh" << 'EOF'
 #!/usr/bin/env bash
 RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Mock gh to fail
+# Mock gh — label list succeeds but issue create fails
 gh() {
-    echo "label 'feature' not found" >&2
+    if [[ "$1" == "label" && "$2" == "list" ]]; then
+        printf "bug\nfeature\n"
+        return 0
+    fi
+    echo "something went wrong" >&2
     return 1
 }
 
+issue_label="feature"
+
 echo -e "${BLUE}Creating GitHub issue...${NC}"
-if ! issue_output=$(gh issue create --title "Test" --body "Body" --label "feature" 2>&1); then
+local -a issue_cmd=(gh issue create --title "Test" --body "Body")
+if [ -n "$issue_label" ]; then
+    issue_cmd+=(--label "$issue_label")
+fi
+if ! issue_output=$("${issue_cmd[@]}" 2>&1); then
     echo -e "  ${RED}✗${NC} Failed to create issue"
     echo "FAILED"
     exit 1
@@ -2867,8 +3030,14 @@ EOF
     [ "$output" -ge 1 ]
 }
 
-@test "prompt_issue_creation uses --label flag for issue type" {
-    run grep 'gh issue create.*--label' "$SCRIPT_DIR/git-shipyard.sh"
+@test "prompt_issue_creation conditionally includes --label flag" {
+    # Verify the script builds the issue_cmd with --label when a label is selected
+    run grep 'issue_cmd.*--label' "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "prompt_issue_creation fetches labels from repo via gh label list" {
+    run grep 'gh label list' "$SCRIPT_DIR/git-shipyard.sh"
     [ "$status" -eq 0 ]
 }
 
