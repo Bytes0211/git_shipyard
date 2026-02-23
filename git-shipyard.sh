@@ -730,7 +730,103 @@ view_pr_details() {
     fi
 
     echo -e "${YELLOW}─────────────────────────────────────────${NC}"
-    return 0
+
+    # Action prompt after viewing details
+    echo ""
+    echo -e "📋 ${YELLOW}Actions:${NC}"
+    echo ""
+    echo -e "  ${CYAN}1)${NC} 🔀 Merge & clean up"
+    echo -e "  ${CYAN}2)${NC} 👈 Back"
+    echo ""
+
+    local view_action
+    while true; do
+        read -r -p "🔢 Choose action [1-2]: " view_action
+        case "$view_action" in
+            1)
+                echo ""
+                echo -e "📝 ${BLUE}The following actions will be performed:${NC}"
+                echo -e "  1. Close PR #${pr_number} (via merge)"
+                echo -e "  2. Merge ${pr_head} into ${pr_base} on GitHub"
+                echo -e "  3. Delete remote branch '${pr_head}'"
+                echo -e "  4. Delete local branch '${pr_head}'"
+                echo -e "  5. Pull ${pr_base} from GitHub into local ${pr_base}"
+                echo ""
+
+                read -r -p "⚠️  Proceed? (y/N): " confirm
+                if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                    echo -e "🚫 ${YELLOW}Operation cancelled.${NC}"
+                    return 0
+                fi
+
+                echo ""
+
+                # Step 1 & 2 & 3: Merge the PR on GitHub (closes it), delete remote branch
+                echo -e "🔀 ${BLUE}Merging PR #${pr_number} (${pr_head} → ${pr_base})...${NC}"
+                local merge_output
+                if ! merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1); then
+                    if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+                        echo -e "  ❌ Merge conflict detected — resolve manually and retry"
+                    else
+                        echo -e "  ❌ Merge failed"
+                        echo "$merge_output" >&2
+                    fi
+                    error_exit "Failed to merge PR #${pr_number}."
+                fi
+                echo -e "  ✅ PR #${pr_number} merged and closed"
+                echo -e "  ✅ Remote branch '${pr_head}' deleted"
+
+                # Step 5: Switch to base branch and pull latest
+                echo -e "🔄 ${BLUE}Switching to ${pr_base} and pulling latest...${NC}"
+                if ! git checkout "$pr_base" 2>/dev/null; then
+                    echo -e "  ⚠️  Could not switch to ${pr_base} automatically"
+                else
+                    if ! git pull origin "$pr_base" 2>/dev/null; then
+                        echo -e "  ⚠️  Could not pull latest ${pr_base}"
+                    else
+                        echo -e "  ✅ Switched to ${pr_base} and pulled latest"
+                    fi
+                fi
+
+                # Step 4: Delete local head branch if it exists
+                local local_branch_deleted=false
+                if git show-ref --verify --quiet "refs/heads/$pr_head"; then
+                    echo -e "🗑️  ${BLUE}Deleting local branch '${pr_head}'...${NC}"
+                    if ! git branch -d "$pr_head" 2>/dev/null; then
+                        echo -e "  ⚠️  Could not delete local branch '${pr_head}'"
+                        echo -e "  👉 To force delete: git branch -D ${pr_head}"
+                    else
+                        echo -e "  ✅ Local branch '${pr_head}' deleted"
+                        local_branch_deleted=true
+                    fi
+                fi
+
+                # Summary
+                echo ""
+                echo "╔══════════════════════════════════════════╗"
+                echo "║     🎉 All actions completed!            ║"
+                echo "╚══════════════════════════════════════════╝"
+                echo ""
+                echo -e "📝 ${CYAN}Summary:${NC}"
+                echo -e "  • PR #${pr_number} merged and closed: ${pr_title}"
+                echo -e "  • Remote branch '${pr_head}' deleted"
+                if [ "$local_branch_deleted" = true ]; then
+                    echo -e "  • Local branch '${pr_head}' deleted"
+                fi
+                echo -e "  • ${pr_base} updated with latest changes"
+                echo ""
+
+                # Return 2 to signal callers that merge & cleanup was performed
+                return 2
+                ;;
+            2)
+                return 0
+                ;;
+            *)
+                echo -e "❌ ${RED}Invalid choice. Enter 1 or 2.${NC}"
+                ;;
+        esac
+    done
 }
 
 # Close a PR without merging
@@ -1131,6 +1227,16 @@ check_prs_with_comments() {
 
     # View the PR details using existing function
     view_pr_details "$selected_pr"
+    local view_rc=$?
+
+    # If merge & cleanup was performed, exit
+    if [ "$view_rc" -eq 2 ]; then
+        echo ""
+        echo "╔══════════════════════════════════════════╗"
+        echo "║        👋 Goodbye! See you later!        ║"
+        echo "╚══════════════════════════════════════════╝"
+        return 0
+    fi
 
     # After viewing, offer close or exit options
     echo ""
@@ -1255,6 +1361,9 @@ pr_management_mode() {
         case "$action" in
             1)
                 view_pr_details "$selected_pr"
+                if [ $? -eq 2 ]; then
+                    return
+                fi
                 ;;
             2)
                 close_pr "$selected_pr" "$selected_title"

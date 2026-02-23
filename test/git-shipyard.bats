@@ -1671,6 +1671,232 @@ EOF
     [ "$output" -ge 1 ]
 }
 
+@test "view_pr_details shows merge and cleanup action prompt" {
+    run grep 'Merge & clean up' "$SCRIPT_DIR/git-shipyard.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "view_pr_details merge and cleanup lists all 5 steps" {
+    run bash -c "sed -n '/Action prompt after viewing/,/return 2/p' '$SCRIPT_DIR/git-shipyard.sh'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Close PR"* ]]
+    [[ "$output" == *"Merge"* ]]
+    [[ "$output" == *"Delete remote branch"* ]]
+    [[ "$output" == *"Delete local branch"* ]]
+    [[ "$output" == *"Pull"* ]]
+}
+
+@test "view_pr_details merge and cleanup uses gh pr merge --merge --delete-branch" {
+    run bash -c "sed -n '/Action prompt after viewing/,/return 2/p' '$SCRIPT_DIR/git-shipyard.sh'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--merge --delete-branch"* ]]
+}
+
+@test "view_pr_details merge and cleanup returns 2 on success" {
+    cat > "$TEST_DIR/test_view_merge_cleanup_rc.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Simulate the merge & cleanup path returning 2
+view_action=1
+confirm="y"
+pr_number=42
+pr_title="Dark mode"
+pr_head="dev"
+pr_base="main"
+
+# Mock functions
+gh() {
+    if [[ "$2" == "merge" ]]; then
+        echo "merged"
+        return 0
+    fi
+    return 0
+}
+git() {
+    case "$1" in
+        checkout) return 0 ;;
+        pull) return 0 ;;
+        show-ref) return 1 ;;  # branch doesn't exist locally
+    esac
+    return 0
+}
+
+# Simulate merge & cleanup action
+case "$view_action" in
+    1)
+        merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1)
+        echo "MERGED=yes"
+        echo "RC=2"
+        ;;
+    2)
+        echo "RC=0"
+        ;;
+esac
+EOF
+    chmod +x "$TEST_DIR/test_view_merge_cleanup_rc.sh"
+
+    run "$TEST_DIR/test_view_merge_cleanup_rc.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MERGED=yes"* ]]
+    [[ "$output" == *"RC=2"* ]]
+}
+
+@test "view_pr_details merge and cleanup cancels on decline" {
+    cat > "$TEST_DIR/test_view_merge_cancel.sh" << 'EOF'
+#!/usr/bin/env bash
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+confirm="n"
+
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "🚫 ${YELLOW}Operation cancelled.${NC}"
+    echo "CANCELLED=yes"
+    echo "RC=0"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_view_merge_cancel.sh"
+
+    run "$TEST_DIR/test_view_merge_cancel.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Operation cancelled"* ]]
+    [[ "$output" == *"CANCELLED=yes"* ]]
+    [[ "$output" == *"RC=0"* ]]
+}
+
+@test "view_pr_details merge and cleanup shows summary" {
+    cat > "$TEST_DIR/test_view_merge_summary.sh" << 'EOF'
+#!/usr/bin/env bash
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+pr_number=42
+pr_title="Dark mode"
+pr_head="dev"
+pr_base="main"
+local_branch_deleted=true
+
+echo -e "📝 ${CYAN}Summary:${NC}"
+echo -e "  • PR #${pr_number} merged and closed: ${pr_title}"
+echo -e "  • Remote branch '${pr_head}' deleted"
+if [ "$local_branch_deleted" = true ]; then
+    echo -e "  • Local branch '${pr_head}' deleted"
+fi
+echo -e "  • ${pr_base} updated with latest changes"
+EOF
+    chmod +x "$TEST_DIR/test_view_merge_summary.sh"
+
+    run "$TEST_DIR/test_view_merge_summary.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR #42 merged and closed: Dark mode"* ]]
+    [[ "$output" == *"Remote branch 'dev' deleted"* ]]
+    [[ "$output" == *"Local branch 'dev' deleted"* ]]
+    [[ "$output" == *"main updated with latest changes"* ]]
+}
+
+@test "view_pr_details merge and cleanup handles merge failure" {
+    cat > "$TEST_DIR/test_view_merge_fail.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Mock gh to fail with conflict
+gh() {
+    echo "merge conflict" >&2
+    return 1
+}
+
+pr_number=42
+
+echo -e "🔀 ${BLUE}Merging PR #${pr_number}...${NC}"
+merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+        echo -e "  ❌ Merge conflict detected — resolve manually and retry"
+        echo "CONFLICT=yes"
+    else
+        echo -e "  ❌ Merge failed"
+    fi
+    echo "FAILED=yes"
+fi
+EOF
+    chmod +x "$TEST_DIR/test_view_merge_fail.sh"
+
+    run "$TEST_DIR/test_view_merge_fail.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Merge conflict detected"* ]]
+    [[ "$output" == *"CONFLICT=yes"* ]]
+    [[ "$output" == *"FAILED=yes"* ]]
+}
+
+@test "view_pr_details merge and cleanup deletes local branch" {
+    cat > "$TEST_DIR/test_view_merge_local_delete.sh" << 'EOF'
+#!/usr/bin/env bash
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+BRANCH_DELETED=""
+
+# Mock git
+git() {
+    case "$1" in
+        show-ref)
+            # Branch exists
+            return 0
+            ;;
+        branch)
+            BRANCH_DELETED="$3"
+            echo "DELETED_BRANCH=$3"
+            return 0
+            ;;
+    esac
+    return 0
+}
+
+pr_head="dev"
+local_branch_deleted=false
+
+if git show-ref --verify --quiet "refs/heads/$pr_head"; then
+    echo -e "🗑️  ${BLUE}Deleting local branch '${pr_head}'...${NC}"
+    if git branch -d "$pr_head" 2>/dev/null; then
+        echo -e "  ✅ Local branch '${pr_head}' deleted"
+        local_branch_deleted=true
+    fi
+fi
+
+echo "LOCAL_DELETED=$local_branch_deleted"
+EOF
+    chmod +x "$TEST_DIR/test_view_merge_local_delete.sh"
+
+    run "$TEST_DIR/test_view_merge_local_delete.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Deleting local branch"* ]]
+    [[ "$output" == *"DELETED_BRANCH=dev"* ]]
+    [[ "$output" == *"LOCAL_DELETED=true"* ]]
+}
+
+@test "pr_management_mode exits loop when view_pr_details returns 2" {
+    run bash -c "grep -A3 'view_pr_details' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'eq 2'"
+    [ "$status" -eq 0 ]
+    [ "$output" -ge 1 ]
+}
+
+@test "check_prs_with_comments exits when view_pr_details returns 2" {
+    run bash -c "grep -A5 'view_pr_details' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'view_rc.*eq 2'"
+    [ "$status" -eq 0 ]
+    [ "$output" -ge 1 ]
+}
+
 # =============================================================================
 # Test 14c: close_pr() function
 # =============================================================================

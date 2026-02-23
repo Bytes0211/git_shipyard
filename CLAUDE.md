@@ -41,12 +41,12 @@ Detection relies on `has_uncommitted_changes()` and `has_commits_ahead()` functi
 
 When entering PR Management mode, the user selects an open PR, then chooses from:
 
-1. **View details & comments** (`view_pr_details()`): Shows PR metadata (title, state, author, branch, diff stats, labels, description), comments with authors/dates, and code reviews with color-coded states (APPROVED/CHANGES_REQUESTED/COMMENTED)
+1. **View details & comments** (`view_pr_details()`): Shows PR metadata (title, state, author, branch, diff stats, labels, description), comments with authors/dates, and code reviews with color-coded states (APPROVED/CHANGES_REQUESTED/COMMENTED). After viewing, offers a **Merge & clean up** action that performs: close PR (via merge) → merge head into base on GitHub (`gh pr merge --merge --delete-branch`) → delete remote branch → delete local branch → switch to base and pull latest. Returns exit code 2 to signal callers to exit.
 2. **Close PR** (`close_pr()`): Closes without merging, optionally deletes remote branch, offers to clean up local branch
 3. **Squash-merge PR** (`squash_merge_pr()`): Squash-merges via `gh pr merge --squash --delete-branch`, switches to base, pulls latest, cleans up local branch, resets dev environment
 4. **View/close linked issues** (`view_linked_issues()`): Parses PR body for issue references (`Closes #N`, `Fixes #N`, `Resolves #N`, `Part of #N`), displays issues with state (OPEN/CLOSED), offers to close individual or all open issues
 
-The action menu loops — view and linked-issues actions return to the menu; close and squash-merge exit.
+The action menu loops — view and linked-issues actions return to the menu; close and squash-merge exit. If "Merge & clean up" is performed from within view details, the action menu also exits (checks return code 2).
 
 ### Script Structure (git-shipyard.sh)
 
@@ -55,11 +55,12 @@ The action menu loops — view and linked-issues actions return to the menu; clo
 - **Pre-flight checks**: Validates git, gh CLI, jq, authentication, remote, detached HEAD, base branch guard; in PR-only mode, checks for open PRs with checks and comments via `check_prs_with_comments()`
 - **Commit workflow**: `get_commit_message()` (single-line or editor), `link_to_pr()` (amend commit with PR reference)
 - **Issue linking**: `select_issue()` fetches open issues for PR linking; when none exist, offers to create one via `_create_issue_for_pr()`
+- **Merge & clean up**: Embedded in `view_pr_details()` as a post-view action; merges PR via `gh pr merge --merge --delete-branch`, deletes local branch, switches to base, pulls latest; returns 2 so callers (`pr_management_mode`, `check_prs_with_comments`) know to exit
 - **Sync**: `sync_with_base()` fetches and merges base into head before PR creation; `check_merge_in_progress()` intercepts unresolved merges
 - **PR checks and comments**: `check_prs_with_comments()` runs during pre-flight in PR-only mode; fetches open PRs with status checks and comments via `gh pr list --json number,title,statusCheckRollup,comments`, displays each PR with check names/conclusions and comment previews, lets user view details via `view_pr_details()`, then offers to close the PR and exit, exit without closing, or continue with the workflow
 - **PR Management**: `pr_management_mode()` → action menu dispatching to `view_pr_details()`, `close_pr()`, `squash_merge_pr()`, `view_linked_issues()`
 - **Dev reset**: `reset_dev_environment()` pulls latest base, recreates fresh head branch (called by `squash_merge_pr()` after successful merge)
-- **Standalone issue creation**: `prompt_issue_creation()` at startup before pre-flight checks
+- **Standalone issue creation**: `prompt_issue_creation()` at startup before pre-flight checks; fetches repository labels dynamically via `gh label list` for the label selection menu (no hardcoded labels); creates issues without a label if the user skips or the repo has no labels
 - **PR creation**: Uses `gh pr create --fill` or `--title`/`--body` when linking an issue
 - **Source guard**: `main()` only runs when executed directly, not when sourced (enables testing)
 
@@ -90,13 +91,14 @@ Tests use BATS with isolated temporary git repositories per test case. Each test
 - Command validation and error handling
 - Issue creation and linking (`select_issue`, `_create_issue_for_pr`)
 - PR Management action menu validation
-- `check_prs_with_comments()`: no PRs, PRs without comments still shown, listing with checks and comments, skip selection, view on selection, close and exit, exit without closing, continue with workflow, integration in pr_only mode, non-interactive skip, action menu options
-- `view_pr_details()`: metadata display, comments, review state color-coding
+- `check_prs_with_comments()`: no PRs, PRs without comments still shown, listing with checks and comments, skip selection, view on selection, close and exit, exit without closing, continue with workflow, integration in pr_only mode, non-interactive skip, action menu options, exits when `view_pr_details` returns 2
+- `view_pr_details()`: metadata display, comments, review state color-coding, merge & cleanup action prompt, merge & cleanup lists all 5 steps, uses `--merge --delete-branch`, returns 2 on success, cancels on decline, summary display, merge failure handling, local branch deletion
 - `close_pr()`: cancellation, success/failure, branch deletion, summary
 - `squash_merge_pr()`: confirmation, conflict detection, summary, `reset_dev_environment` integration
+- `pr_management_mode`: exits action menu loop when `view_pr_details` returns 2
 - `view_linked_issues()`: keyword parsing (case-insensitive), deduplication, state display, close all/single/skip, failure handling
 - Sync (`sync_with_base`, `check_merge_in_progress`)
-- Standalone issue creation (`prompt_issue_creation`)
+- Standalone issue creation (`prompt_issue_creation`): dynamic label fetching from repo, label menu maps selection, skip option selects no label, skips label when repo has no labels, creates issue with/without label, conditionally includes `--label` flag, fetches labels via `gh label list`
 
 ## Key Constraints
 
