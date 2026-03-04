@@ -1829,7 +1829,7 @@ ${overview}
 # Main script
 main() {
     # Trap for unexpected errors (inside main for source guard compatibility)
-    trap 'error_exit "An unexpected error occurred."' ERR
+    trap 'error_exit "An unexpected error occurred on line $LINENO."' ERR
 
     clear
 
@@ -2054,25 +2054,25 @@ main() {
         # Use explicit --title and --body (not --fill) for clarity
         local pr_title commit_count
         commit_count=$(git rev-list --count "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null || echo "1")
-        if [ "$commit_count" -eq 1 ]; then
-            pr_title=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
+    if [ "$commit_count" -eq 1 ]; then
+            pr_title=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null) || true
         else
             # Multi-commit: use branch name formatted as title
             pr_title=$(echo "${HEAD_BRANCH}" | sed 's/[-_]/ /g; s/\b\w/\u&/g')
         fi
         local auto_body
-        auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
+        auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100) || true
         local full_body="${auto_body}
 
 Closes #${SELECTED_ISSUE}"
         local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$full_body")
-        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+        if [ "${DRAFT_PR:-false}" = true ]; then pr_cmd+=(--draft); fi
         if ! "${pr_cmd[@]}"; then
             pr_create_failed=true
         fi
     else
         local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill)
-        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+        if [ "${DRAFT_PR:-false}" = true ]; then pr_cmd+=(--draft); fi
         if ! "${pr_cmd[@]}"; then
             pr_create_failed=true
         fi
