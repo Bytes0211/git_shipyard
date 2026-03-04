@@ -11,7 +11,7 @@
 - 💬 **PR comment check** — In PR-only mode, surfaces open PRs with comments before proceeding
 - 🔍 **PR details & comments** — Read PR metadata, comment threads, and code reviews
 - ❌ **Close PRs** — Close pull requests without merging, with optional branch cleanup
-- 🔀 **Squash-merge PRs** — Merge, clean up branches, and reset your dev environment
+- 🔀 **Squash-merge PRs** — Merge, clean up branches, and reset your head branch
 - 🎫 **Linked issue management** — Discover issues linked to a PR and close them
 - 🔗 **Issue linking** — Link GitHub issues to new PRs (`Closes #N` for auto-close on merge)
 - 📋 **Issue creation** — Create issues on the fly and link them to PRs
@@ -19,6 +19,7 @@
 - 📝 **Multi-line commit messages** — Single-line input or open your preferred editor
 - ✅ **Pre-flight checks** — Validates your entire environment before touching anything
 - 🎨 **Beautiful CLI** — Color-coded output with progress indicators and spinners
+- 🌿 **Branch management helper** — Create or delete branches before starting the main workflow
 - 🛡️ **Safe by default** — Confirmation prompts before every destructive operation
 - ⚙️ **Configurable** — Override base/head branches and create draft PRs via flags
 - 📄 **Single file** — No build system, no framework, just one Bash script
@@ -75,10 +76,10 @@ Run from within any Git repository:
 
 ### Custom Branches
 
-Override the default `dev → main` PR direction:
+Override the default PR direction (HEAD defaults to your current branch):
 
 ```bash
-./git-shipyard.sh --base production --head feature-auth
+./git-shipyard.sh --base production --head hotfix-auth
 ```
 
 ### Draft PRs
@@ -98,13 +99,22 @@ Override the default `dev → main` PR direction:
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--base <branch>` | 🎯 Target (base) branch for the PR | `main` |
-| `--head <branch>` | 🚀 Source (head) branch for the PR | `dev` |
+| `--head <branch>` | 🚀 Source (head) branch for the PR | current branch |
 | `--draft` | 📝 Create the PR as a draft | `false` |
 | `--help`, `-h` | ❓ Print usage and exit | — |
 
 ---
 
 ## 🧭 How It Works
+
+### 🛠️ Startup Helpers
+
+When you launch Git Shipyard, you're first offered two optional helpers:
+
+1. 🔧 Branch management — create a new branch or delete stale local/remote branches before continuing.
+2. 📝 Standalone issue creation — open a GitHub issue (with label selection) before entering the main workflow.
+
+If either helper completes an action, the session exits so you can review changes.
 
 ### 🔍 Pre-flight Checks
 
@@ -165,6 +175,20 @@ Before creating a PR, Git Shipyard automatically:
 
 If there are **merge conflicts**, the script lists the conflicting files and exits with clear resolution instructions. On your next run, it detects the in-progress merge and resumes automatically.
 
+## ✅ Testing
+
+Run the automated test suite with [Bats](https://github.com/bats-core/bats-core):
+
+```/dev/null/commands.sh#L1-1
+bats test/git-shipyard.bats
+```
+
+To execute a single test, provide a name filter:
+
+```/dev/null/commands.sh#L3-3
+bats test/git-shipyard.bats --filter "test name pattern"
+```
+
 ---
 
 ## 📖 Examples
@@ -186,6 +210,7 @@ Running pre-flight checks...
   ✓ jq found
   ✓ Inside git repository
   ✓ On a valid branch
+  ✓ Head branch: feature-auth
   ✓ GitHub authenticated
   ✓ Remote 'origin' configured
   ✓ Uncommitted changes detected
@@ -202,9 +227,9 @@ Choose (1/2): 1
 The following actions will be performed:
   1. Stage all changes (git add .)
   2. Commit with message: "Add user authentication middleware"
-  3. Push to origin/dev
+  3. Push to origin/feature-auth
   4. Sync with main (merge any new changes)
-  5. Create PR from dev → main
+  5. Create PR from feature-auth → main
 
 Proceed? (y/N): y
 
@@ -212,10 +237,10 @@ Staging changes...
   ✓ Changes staged
 Committing...
   ✓ Changes committed
-Pushing to origin/dev...
-  ✓ Pushed to origin/dev
-Syncing dev with main before PR...
-  ✓ dev is up to date with main
+Pushing to origin/feature-auth...
+  ✓ Pushed to origin/feature-auth
+Syncing feature-auth with main before PR...
+  ✓ feature-auth is up to date with main
 
 Fetching open issues...
   ℹ No open issues found
@@ -234,9 +259,9 @@ https://github.com/user/repo/pull/7
 
 Summary:
   • Changes staged and committed
-  • Pushed to origin/dev
-  • Synced dev with main (already up to date)
-  • Pull request created (dev → main)
+  • Pushed to origin/feature-auth
+  • Synced feature-auth with main (already up to date)
+  • Pull request created (feature-auth → main)
 
 Goodbye!
 ```
@@ -272,9 +297,9 @@ Choose action [1-3]: 3
   ℹ  Continuing with workflow
 
 The following actions will be performed:
-  1. Push to origin/dev (if needed)
+  1. Push to origin/feature-auth (if needed)
   2. Sync with main (merge any new changes)
-  3. Create PR from dev → main
+  3. Create PR from feature-auth → main
 
 Proceed? (y/N): y
 ```
@@ -574,14 +599,17 @@ At startup, Git Shipyard offers to create a standalone GitHub issue before any g
 
 ### 🌿 Default Branches
 
-Edit lines 10–11 in `git-shipyard.sh` to change the permanent defaults:
+`BASE_BRANCH` defaults to `main`. `HEAD_BRANCH` defaults to your **current branch** (auto-detected via `git symbolic-ref`). Override per invocation with `--base` and `--head` flags:
+
+```bash
+./git-shipyard.sh --base production --head hotfix-auth
+```
+
+To change the permanent base branch default, edit line 10 in `git-shipyard.sh`:
 
 ```bash
 BASE_BRANCH="main"    # Target branch for PRs
-HEAD_BRANCH="dev"     # Source branch for PRs
 ```
-
-Or override per invocation with `--base` and `--head` flags.
 
 ### 🖊️ Editor Preference
 
@@ -616,7 +644,7 @@ The test suite covers:
 - **PR Management** — Action menu validation, PR selection, exit handling
 - **View PR details** — Metadata display, comment rendering, review state color-coding
 - **Close PR** — Cancellation, success/failure, branch deletion, summary
-- **Squash-merge PR** — Confirmation, conflict detection, branch cleanup, dev environment reset
+- **Squash-merge PR** — Confirmation, conflict detection, branch cleanup, head branch reset
 - **Linked issues** — Keyword parsing (case-insensitive), deduplication, state display, close all/single/skip
 - **Issue linking** — Selection, creation when none exist, empty title handling
 - **Sync** — Up-to-date detection, clean merge, fetch failure, conflict listing with instructions
@@ -637,7 +665,7 @@ shellcheck git-shipyard.sh
 git_shipyard/
 ├── git-shipyard.sh          # The entire application (single file)
 ├── test/
-│   └── git-shipyard.bats    # BATS test suite (145 tests)
+│   └── git-shipyard.bats    # BATS test suite (159 tests)
 ├── CLAUDE.md                 # Claude Code guidance
 ├── README.md                 # You are here
 └── ...
@@ -658,9 +686,9 @@ git_shipyard/
 | `pr_management_mode()` | PR selection → action menu dispatch |
 | `view_pr_details()` | Display PR metadata, comments, and reviews |
 | `close_pr()` | Close PR without merging, optional branch cleanup |
-| `squash_merge_pr()` | Squash-merge via GitHub API, cleanup, reset dev environment |
+| `squash_merge_pr()` | Squash-merge via GitHub API, cleanup, reset head branch |
 | `view_linked_issues()` | Parse PR body for issue refs, display state, offer to close |
-| `reset_dev_environment()` | Pull latest base, recreate fresh head branch |
+| `reset_head_environment()` | Pull latest base, recreate fresh head branch |
 | `prompt_issue_creation()` | Standalone issue creation at startup |
 
 ### 🧬 Key Design Decisions
@@ -674,7 +702,7 @@ git_shipyard/
 | ⚓ **GitHub-only** | Hardcoded to `gh` CLI for simplicity and reliability |
 | 🎯 **Stages everything** | Uses `git add .` — simple, predictable behavior |
 | 🌐 **`origin` remote** | Default remote; keeps the script focused |
-| 🧹 **Reset after merge only** | `reset_dev_environment()` runs inside `squash_merge_pr()`, not before the menu |
+| 🧹 **Reset after merge only** | `reset_head_environment()` runs inside `squash_merge_pr()`, not before the menu |
 
 ---
 

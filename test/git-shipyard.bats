@@ -47,7 +47,11 @@ create_test_repo() {
 # =============================================================================
 
 @test "parses --base argument correctly" {
-    # Create a test wrapper that sources the script and outputs branch variables
+    # Create a test repo so HEAD_BRANCH auto-detects the current branch
+    repo_dir=$(create_test_repo)
+    cd "$repo_dir"
+    git checkout -b my-feature >/dev/null 2>&1
+
     cat > "$TEST_DIR/test_args.sh" << EOF
 #!/usr/bin/env bash
 # Override main to prevent execution
@@ -61,7 +65,7 @@ EOF
     run "$TEST_DIR/test_args.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"BASE_BRANCH=production"* ]]
-    [[ "$output" == *"HEAD_BRANCH=dev"* ]]
+    [[ "$output" == *"HEAD_BRANCH=my-feature"* ]]
 }
 
 @test "parses --head argument correctly" {
@@ -97,6 +101,11 @@ EOF
 }
 
 @test "uses default values when no arguments provided" {
+    # Create a test repo so HEAD_BRANCH auto-detects the current branch
+    repo_dir=$(create_test_repo)
+    cd "$repo_dir"
+    git checkout -b my-feature >/dev/null 2>&1
+
     cat > "$TEST_DIR/test_args.sh" << EOF
 #!/usr/bin/env bash
 main() { :; }
@@ -109,7 +118,7 @@ EOF
     run "$TEST_DIR/test_args.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"BASE_BRANCH=main"* ]]
-    [[ "$output" == *"HEAD_BRANCH=dev"* ]]
+    [[ "$output" == *"HEAD_BRANCH=my-feature"* ]]
 }
 
 # =============================================================================
@@ -1470,15 +1479,15 @@ EOF
     [[ "$output" != *"cleaned up"* ]]
 }
 
-@test "squash_merge_pr calls reset_dev_environment" {
-    # Verify reset_dev_environment is called inside squash_merge_pr
-    run bash -c "sed -n '/^squash_merge_pr()/,/^}/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'reset_dev_environment'"
+@test "squash_merge_pr calls reset_head_environment" {
+    # Verify reset_head_environment is called inside squash_merge_pr
+    run bash -c "sed -n '/^squash_merge_pr()/,/^}/p' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'reset_head_environment'"
     [ "$output" -ge 1 ]
 }
 
-@test "reset_dev_environment is NOT called before pr_management_mode in main" {
-    # Verify reset_dev_environment is NOT called right before pr_management_mode in main
-    run bash -c "grep -B1 'pr_management_mode' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'reset_dev_environment'"
+@test "reset_head_environment is NOT called before pr_management_mode in main" {
+    # Verify reset_head_environment is NOT called right before pr_management_mode in main
+    run bash -c "grep -B1 'pr_management_mode' '$SCRIPT_DIR/git-shipyard.sh' | grep -c 'reset_head_environment'"
     [ "$output" -eq 0 ]
 }
 

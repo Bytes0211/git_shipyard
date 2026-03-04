@@ -6,9 +6,9 @@
 
 set -o pipefail
 
-# Default branch names (can be overridden with --base and --head)
+# Branch configuration (can be overridden with --base and --head)
 BASE_BRANCH="main"
-HEAD_BRANCH="dev"
+HEAD_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -36,7 +36,7 @@ while [[ $# -gt 0 ]]; do
         --help|-h)
             echo "Usage: git-shipyard.sh [--base <branch>] [--head <branch>] [--draft]"
             echo "  --base   Base branch for PR (default: main)"
-            echo "  --head   Head branch for PR (default: dev)"
+            echo "  --head   Head branch for PR (default: current branch)"
             echo "  --draft  Create PR as draft"
             exit 0
             ;;
@@ -569,8 +569,13 @@ sync_with_base() {
     SYNC_RESULT="synced"
 }
 
-# Reset local dev environment: pull latest base branch, recreate head branch
-reset_dev_environment() {
+# Reset local head branch: pull latest base branch, recreate head branch
+reset_head_environment() {
+    # Skip if HEAD_BRANCH is the same as BASE_BRANCH (nothing to reset)
+    if [ "$HEAD_BRANCH" = "$BASE_BRANCH" ]; then
+        return 0
+    fi
+
     echo ""
     echo -e "🔄 ${BLUE}Resetting local ${HEAD_BRANCH} environment...${NC}"
 
@@ -971,8 +976,8 @@ squash_merge_pr() {
         fi
     fi
 
-    # Reset dev environment after successful merge
-    reset_dev_environment
+    # Reset head branch after successful merge
+    reset_head_environment
 
     # Success message
     echo ""
@@ -1876,6 +1881,12 @@ main() {
 
     check_not_detached
     echo -e "  ✅ On a valid branch"
+
+    # Resolve HEAD_BRANCH to current branch if not set via --head
+    if [ -z "$HEAD_BRANCH" ]; then
+        HEAD_BRANCH=$(git symbolic-ref --short HEAD)
+    fi
+    echo -e "  ✅ Head branch: ${HEAD_BRANCH}"
 
     check_gh_auth
     echo -e "  ✅ GitHub authenticated"

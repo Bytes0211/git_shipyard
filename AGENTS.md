@@ -47,7 +47,7 @@ git commit -m "test"
 
 ### Running Unit Tests
 ```bash
-# Run all BATS tests (99 tests)
+# Run all BATS tests (159 tests)
 bats test/git-shipyard.bats
 ```
 
@@ -63,9 +63,10 @@ git shipyard --help
 ## Key Implementation Details
 
 ### Branch Configuration
-- Default branches: `BASE_BRANCH="main"`, `HEAD_BRANCH="dev"` (lines 10-11)
-- Overrideable via `--base` and `--head` flags
-- These defaults determine PR direction and push targets
+- `BASE_BRANCH` defaults to `"main"` (line 10)
+- `HEAD_BRANCH` auto-detects from the current branch via `git symbolic-ref --short HEAD` (line 11); falls back to empty and is resolved in `main()` after pre-flight checks
+- Both are overrideable via `--base` and `--head` flags
+- These values determine PR direction and push targets
 
 ### GitHub CLI Integration
 - Uses `gh pr create --base BASE --head HEAD --fill` to auto-populate PR from commit messages
@@ -117,7 +118,7 @@ echo -e "  ${GREEN}✓${NC} Success message"
 - Consider adding `--provider` flag and conditional logic
 
 ### Branch Defaults for Different Projects
-Users can override defaults per-invocation with flags, or modify lines 10-11 for permanent changes. Consider reading from git config if permanent per-repo customization needed.
+HEAD_BRANCH auto-detects the current branch, so no per-project configuration is needed for the head branch. Users can override the base branch per-invocation with `--base`, or modify line 10 for a permanent change. Consider reading from git config if permanent per-repo customization is needed.
 
 ### Squash-Merge Considerations
 - Squash-merge uses `git merge --squash` which does NOT set `MERGE_HEAD`
