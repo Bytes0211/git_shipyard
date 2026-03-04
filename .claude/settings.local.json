@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /home/scotton/dev/projects/git_shipyard config --local --list)",
+      "Bash(git -C /home/scotton/dev/projects/git_shipyard branch -a)",
+      "Bash(git -C /home/scotton/dev/projects/git_shipyard remote -v)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "mcp__tavily__tavily_search",
+      "Bash(git -C /home/scotton/dev/projects/git_shipyard show ba428c0:git-shipyard.sh)",
+      "Bash(bats:*)",
+      "Bash(head:*)"
+    ]
+  }
+}
