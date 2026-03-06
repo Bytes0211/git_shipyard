@@ -346,7 +346,9 @@ gh() {
 }
 
 # Simulate the PR creation logic from the script
-if ! gh pr create --base main --head "$HEAD_BRANCH" --fill; then
+pr_title="PR - Feature Branch"
+auto_body=""
+if ! gh pr create --base main --head "$HEAD_BRANCH" --title "$pr_title" --body "$auto_body"; then
     # Check if PR already exists
     if gh pr view "$HEAD_BRANCH" &>/dev/null; then
         echo "PR already exists for this branch"
@@ -398,7 +400,9 @@ gh() {
 }
 
 # Simulate the PR creation logic from the script
-if ! gh pr create --base main --head "$HEAD_BRANCH" --fill; then
+pr_title="PR - Feature Branch"
+auto_body=""
+if ! gh pr create --base main --head "$HEAD_BRANCH" --title "$pr_title" --body "$auto_body"; then
     # Check if PR already exists
     if gh pr view "$HEAD_BRANCH" &>/dev/null; then
         echo "PR already exists for this branch"

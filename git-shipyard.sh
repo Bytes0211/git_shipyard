@@ -307,9 +307,11 @@ Part of #${selected_pr}"
 # When issues exist: display list and let user pick one or skip
 # When no issues exist: offer to create a new issue to link to the PR
 SELECTED_ISSUE=""
+SELECTED_ISSUE_TITLE=""
 CREATED_ISSUE_FOR_PR=""
 select_issue() {
     SELECTED_ISSUE=""
+    SELECTED_ISSUE_TITLE=""
     CREATED_ISSUE_FOR_PR=""
 
     echo ""
@@ -384,9 +386,9 @@ select_issue() {
     fi
 
     SELECTED_ISSUE=${issue_numbers[$((selection - 1))]}
-    local selected_title=${issue_titles[$((selection - 1))]}
+    SELECTED_ISSUE_TITLE=${issue_titles[$((selection - 1))]}
 
-    echo -e "  ✅ Will link issue #${SELECTED_ISSUE}: ${selected_title}"
+    echo -e "  ✅ Will link issue #${SELECTED_ISSUE}: ${SELECTED_ISSUE_TITLE}"
     return 0
 }
 
@@ -460,6 +462,7 @@ _create_issue_for_pr() {
 
     # Extract issue number from the returned URL
     SELECTED_ISSUE=$(echo "$issue_output" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+')
+    SELECTED_ISSUE_TITLE="$issue_title"
     CREATED_ISSUE_FOR_PR="$issue_title"
     echo -e "  ✅ Issue #${SELECTED_ISSUE} created: ${issue_title}"
     echo -e "  ✅ Will link issue #${SELECTED_ISSUE} to this PR"
@@ -2050,29 +2053,32 @@ main() {
 
     # Build PR create command with optional issue link
     local pr_create_failed=false
+    local commit_subject
+    commit_subject=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
+    if [ -z "$commit_subject" ]; then
+        commit_subject=$(echo "${HEAD_BRANCH}" | sed 's/[-_]/ /g; s/\b\w/\u&/g')
+    fi
+    local auto_body
+    auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
+
     if [ -n "$SELECTED_ISSUE" ]; then
-        # Use explicit --title and --body (not --fill) for clarity
-        local pr_title commit_count
-        commit_count=$(git rev-list --count "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null || echo "1")
-    if [ "$commit_count" -eq 1 ]; then
-            pr_title=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null) || true
-        else
-            # Multi-commit: use branch name formatted as title
-            pr_title=$(echo "${HEAD_BRANCH}" | sed 's/[-_]/ /g; s/\b\w/\u&/g')
+        local issue_title="${SELECTED_ISSUE_TITLE}"
+        if [ -z "$issue_title" ]; then
+            issue_title="$commit_subject"
         fi
-        local auto_body
-        auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100) || true
+        local pr_title="PR - ${issue_title}"
         local full_body="${auto_body}
 
 Closes #${SELECTED_ISSUE}"
         local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$full_body")
-        if [ "${DRAFT_PR:-false}" = true ]; then pr_cmd+=(--draft); fi
+        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
         if ! "${pr_cmd[@]}"; then
             pr_create_failed=true
         fi
     else
-        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --fill)
-        if [ "${DRAFT_PR:-false}" = true ]; then pr_cmd+=(--draft); fi
+        local pr_title="PR - ${commit_subject}"
+        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$auto_body")
+        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
         if ! "${pr_cmd[@]}"; then
             pr_create_failed=true
         fi
