@@ -2048,54 +2048,89 @@ main() {
     # Offer to link an issue to the PR
     select_issue || true
 
-    echo -e "📋 ${BLUE}Creating pull request...${NC}"
-    echo -e "${YELLOW}─────────────────────────────────────────${NC}"
-
-    # Build PR create command with optional issue link
-    local pr_create_failed=false
-    local commit_subject
-    commit_subject=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
-    if [ -z "$commit_subject" ]; then
-        commit_subject=$(echo "${HEAD_BRANCH}" | sed 's/[-_]/ /g; s/\b\w/\u&/g')
+    # Check if a PR already exists for this branch before attempting creation
+    local existing_pr_number=""
+    local existing_pr_url=""
+    local existing_pr_json
+    existing_pr_json=$(gh pr list --head "${HEAD_BRANCH}" --base "${BASE_BRANCH}" --state open --json number,url --limit 1 2>/dev/null)
+    if [ -n "$existing_pr_json" ] && [ "$existing_pr_json" != "[]" ]; then
+        existing_pr_number=$(echo "$existing_pr_json" | jq -r '.[0].number')
+        existing_pr_url=$(echo "$existing_pr_json" | jq -r '.[0].url')
     fi
-    local auto_body
-    auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
 
-    if [ -n "$SELECTED_ISSUE" ]; then
-        local issue_title="${SELECTED_ISSUE_TITLE}"
-        if [ -z "$issue_title" ]; then
-            issue_title="$commit_subject"
-        fi
-        local pr_title="PR - ${issue_title}"
-        local full_body="${auto_body}
+    local pr_existed=false
+
+    if [ -n "$existing_pr_number" ]; then
+        # PR already exists — update it instead of creating a new one
+        pr_existed=true
+        echo -e "📋 ${BLUE}PR #${existing_pr_number} already exists for ${HEAD_BRANCH} → ${BASE_BRANCH}${NC}"
+        echo -e "  🔗 ${existing_pr_url}"
+        echo -e "  ✅ Changes pushed to existing PR"
+
+        # If an issue was selected, link it to the existing PR
+        if [ -n "$SELECTED_ISSUE" ]; then
+            echo -e "🔗 ${BLUE}Linking issue #${SELECTED_ISSUE} to PR #${existing_pr_number}...${NC}"
+            local existing_body
+            existing_body=$(gh pr view "$existing_pr_number" --json body -q '.body' 2>/dev/null)
+
+            # Only append if not already linked
+            if echo "$existing_body" | grep -q "Closes #${SELECTED_ISSUE}"; then
+                echo -e "  ℹ️  Issue #${SELECTED_ISSUE} is already linked"
+            else
+                local updated_body="${existing_body}
 
 Closes #${SELECTED_ISSUE}"
-        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$full_body")
-        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
-        if ! "${pr_cmd[@]}"; then
-            pr_create_failed=true
+                if gh pr edit "$existing_pr_number" --body "$updated_body" &>/dev/null; then
+                    echo -e "  ✅ Issue #${SELECTED_ISSUE} linked to PR #${existing_pr_number}"
+                else
+                    echo -e "  ⚠️  Could not update PR body to link issue"
+                fi
+            fi
         fi
     else
-        local pr_title="PR - ${commit_subject}"
-        local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$auto_body")
-        [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
-        if ! "${pr_cmd[@]}"; then
-            pr_create_failed=true
-        fi
-    fi
+        # No existing PR — create a new one
+        echo -e "📋 ${BLUE}Creating pull request...${NC}"
+        echo -e "${YELLOW}─────────────────────────────────────────${NC}"
 
-    if [ "$pr_create_failed" = true ]; then
-        # Check if PR already exists
-        if gh pr view "${HEAD_BRANCH}" &>/dev/null; then
-            echo -e "${YELLOW}─────────────────────────────────────────${NC}"
-            echo -e "  ℹ️  PR already exists for this branch"
-            gh pr view "${HEAD_BRANCH}" --web 2>/dev/null || true
+        local pr_create_failed=false
+        local commit_subject
+        commit_subject=$(git log -1 --format="%s" "${HEAD_BRANCH}" 2>/dev/null)
+        if [ -z "$commit_subject" ]; then
+            commit_subject=$(echo "${HEAD_BRANCH}" | sed 's/[-_]/ /g; s/\b\w/\u&/g')
+        fi
+        local auto_body
+        auto_body=$(git log --format="%B" "${BASE_BRANCH}".."${HEAD_BRANCH}" 2>/dev/null | head -100)
+
+        if [ -n "$SELECTED_ISSUE" ]; then
+            local issue_title="${SELECTED_ISSUE_TITLE}"
+            if [ -z "$issue_title" ]; then
+                issue_title="$commit_subject"
+            fi
+            local pr_title="PR - ${issue_title}"
+            local full_body="${auto_body}
+
+Closes #${SELECTED_ISSUE}"
+            local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$full_body")
+            [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+            if ! "${pr_cmd[@]}"; then
+                pr_create_failed=true
+            fi
         else
+            local pr_title="PR - ${commit_subject}"
+            local pr_cmd=(gh pr create --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --title "$pr_title" --body "$auto_body")
+            [ "${DRAFT_PR:-false}" = true ] && pr_cmd+=(--draft)
+            if ! "${pr_cmd[@]}"; then
+                pr_create_failed=true
+            fi
+        fi
+
+        if [ "$pr_create_failed" = true ]; then
             error_exit "Failed to create PR. Check the output above for details."
         fi
+
+        echo -e "${YELLOW}─────────────────────────────────────────${NC}"
     fi
 
-    echo -e "${YELLOW}─────────────────────────────────────────${NC}"
     echo ""
 
     # Success message
@@ -2114,7 +2149,11 @@ Closes #${SELECTED_ISSUE}"
     elif [ "$SYNC_RESULT" = "up_to_date" ]; then
         echo -e "  • 🔄 Synced ${HEAD_BRANCH} with ${BASE_BRANCH} (already up to date)"
     fi
-    echo -e "  • 📋 Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
+    if [ "$pr_existed" = true ]; then
+        echo -e "  • 📋 Changes pushed to existing PR #${existing_pr_number} (${HEAD_BRANCH} → ${BASE_BRANCH})"
+    else
+        echo -e "  • 📋 Pull request created (${HEAD_BRANCH} → ${BASE_BRANCH})"
+    fi
     if [ -n "$SELECTED_ISSUE" ]; then
         if [ -n "$CREATED_ISSUE_FOR_PR" ]; then
             echo -e "  • 🔗 Created and linked issue #${SELECTED_ISSUE}: ${CREATED_ISSUE_FOR_PR}"
