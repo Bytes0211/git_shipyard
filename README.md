@@ -12,6 +12,7 @@
 - 🔍 **PR details & comments** — Read PR metadata, comment threads, and code reviews
 - ❌ **Close PRs** — Close pull requests without merging, with optional branch cleanup
 - 🔀 **Squash-merge PRs** — Merge, clean up branches, and reset your head branch
+- 🎯 **Merge-ready detection** — Auto-detects when your PR is ready to merge and offers one-step merge, cleanup, and new branch creation
 - 🎫 **Linked issue management** — Discover issues linked to a PR and close them
 - 🔗 **Issue linking** — Link GitHub issues to new PRs (`Closes #N` for auto-close on merge)
 - 📋 **Issue creation** — Create issues on the fly and link them to PRs
@@ -130,6 +131,7 @@ Before any operation, Git Shipyard validates your environment:
 8. ✅ No unresolved merge in progress
 9. ✅ Not on base branch (Full & PR-only modes)
 10. 💬 Open PRs with comments check (PR-only mode)
+11. 🎯 Merge-ready detection (PR-only mode)
 
 ### 🔀 Execution Modes
 
@@ -148,10 +150,20 @@ Stage All → Commit → Link to PR (opt.) → Push → Sync with Base → Link 
 > **Triggered when:** No uncommitted changes, but commits ahead of base
 
 ```
-Check PRs with Comments (opt.) → Push → Sync with Base → Link Issue (opt.) → Create PR
+Check PRs with Comments (opt.) → Merge-Ready Check (opt.) → Push → Sync with Base → Link Issue (opt.) → Create PR
 ```
 
 During pre-flight, if open PRs with comments are detected, you can review them before proceeding. After viewing a PR's details and comments, you can close it and exit, exit without closing, or continue with the normal workflow.
+
+#### 🎯 Merge-Ready Mode (PR-Only sub-mode)
+
+> **Triggered when:** PR-only conditions are met AND: local branch is synced with remote, an open PR exists for the branch, and the PR has a linked issue
+
+```
+Detect merge-ready → Confirm → Merge PR → Delete remote branch → Checkout base → Pull latest → Delete local branch → Create new feature branch (opt.)
+```
+
+When Git Shipyard detects that your branch is fully pushed, has an open PR with a linked issue, and is ahead of base, it offers to merge the PR and start fresh in one step. If you decline, the normal PR-only workflow continues.
 
 #### 🔀 PR Management Mode
 
@@ -504,7 +516,56 @@ Closing PR #35...
 👋 Goodbye! See you later!
 ```
 
-### 🟣 Scenario 8: Custom branches with draft PR
+### 🎯 Scenario 8: Merge-Ready Mode (auto-detected)
+
+```
+$ ./git-shipyard.sh
+
+  ✓ Commits ahead of main (already committed)
+  ✓ Not on base branch
+  ✓ Merge-ready: PR #42 with linked issue
+
+🎯 Merge-ready detected!
+  Branch feature-auth is fully pushed with an open PR and linked issue.
+
+The following actions will be performed:
+  1. Merge PR #42: Add user authentication
+  2. Delete remote branch 'feature-auth'
+  3. Switch to main and pull latest
+  4. Delete local branch 'feature-auth'
+  5. Create a new feature branch
+
+Merge and start fresh? (y/N): y
+
+Merging PR #42 (feature-auth → main)...
+  ✓ PR #42 merged and closed
+  ✓ Remote branch 'feature-auth' deleted
+Switching to main and pulling latest...
+  ✓ Switched to main and pulled latest
+Deleting local branch 'feature-auth'...
+  ✓ Local branch 'feature-auth' deleted
+
+Create a new feature branch?
+Enter new branch name (or press Enter to skip): feature-payments
+
+Creating branch 'feature-payments'...
+  ✓ Branch 'feature-payments' created and checked out
+
+╔════════════════════════════════════════╗
+║     ✓ All actions completed!           ║
+╚════════════════════════════════════════╝
+
+Summary:
+  • PR #42 merged and closed: Add user authentication
+  • Remote branch 'feature-auth' deleted
+  • Local branch 'feature-auth' deleted
+  • main updated with latest changes
+  • New branch 'feature-payments' created
+
+👋 Goodbye! See you later!
+```
+
+### 🟣 Scenario 9: Custom branches with draft PR
 
 ```bash
 ./git-shipyard.sh --base production --head hotfix-auth --draft
@@ -683,6 +744,10 @@ git_shipyard/
 | `sync_with_base()` | Fetch + merge base branch into head before PR creation |
 | `check_merge_in_progress()` | Detect and resume in-progress merges from prior sync |
 | `check_prs_with_comments()` | Pre-flight check in PR-only mode; lists open PRs with comments, lets user view/close/exit |
+| `is_local_synced_with_remote()` | Fetch remote and compare local HEAD with origin/HEAD_BRANCH |
+| `has_open_pr_for_branch()` | Check for open PR matching HEAD → BASE; sets `MERGE_READY_PR_*` globals |
+| `pr_has_linked_issue()` | Scan PR body for closing keywords (`Closes/Fixes/Resolves/Part of #N`) |
+| `merge_ready_mode()` | Merge PR, clean up branches, prompt for new feature branch |
 | `pr_management_mode()` | PR selection → action menu dispatch |
 | `view_pr_details()` | Display PR metadata, comments, and reviews |
 | `close_pr()` | Close PR without merging, optional branch cleanup |
@@ -713,7 +778,7 @@ git_shipyard/
 | 🐙 **GitHub only** | Relies on the `gh` CLI; no GitLab / Bitbucket support |
 | 🌐 **`origin` remote** | Hardcoded remote name; not currently configurable |
 | 📂 **Stages all changes** | `git add .` with no selective / interactive staging |
-| 🔀 **Squash-merge only** | PR Management uses squash-merge; no regular merge or rebase option |
+| 🔀 **Squash-merge in PR Management** | PR Management mode uses squash-merge; merge-ready mode uses regular merge |
 | 🎫 **Keyword-based issue detection** | Linked issues are parsed from PR body text, not GitHub's API linking |
 
 ---

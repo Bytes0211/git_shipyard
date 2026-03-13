@@ -1286,6 +1286,157 @@ check_prs_with_comments() {
     done
 }
 
+# Check if local branch is synced with remote (all commits pushed)
+is_local_synced_with_remote() {
+    git fetch origin "${HEAD_BRANCH}" 2>/dev/null || return 1
+    local local_head remote_head
+    local_head=$(git rev-parse HEAD 2>/dev/null)
+    remote_head=$(git rev-parse "origin/${HEAD_BRANCH}" 2>/dev/null) || return 1
+    [ "$local_head" = "$remote_head" ]
+}
+
+# Check if there's an open PR for HEAD_BRANCH → BASE_BRANCH
+# Sets MERGE_READY_PR_NUMBER and MERGE_READY_PR_TITLE globals
+MERGE_READY_PR_NUMBER=""
+MERGE_READY_PR_TITLE=""
+has_open_pr_for_branch() {
+    MERGE_READY_PR_NUMBER=""
+    MERGE_READY_PR_TITLE=""
+    local pr_json
+    pr_json=$(gh pr list --head "${HEAD_BRANCH}" --base "${BASE_BRANCH}" --state open --json number,title --limit 1 2>/dev/null)
+    if [ -z "$pr_json" ] || [ "$pr_json" = "[]" ]; then
+        return 1
+    fi
+    MERGE_READY_PR_NUMBER=$(echo "$pr_json" | jq -r '.[0].number')
+    MERGE_READY_PR_TITLE=$(echo "$pr_json" | jq -r '.[0].title')
+    [ -n "$MERGE_READY_PR_NUMBER" ] && [ "$MERGE_READY_PR_NUMBER" != "null" ]
+}
+
+# Check if a PR has a linked issue in its body
+pr_has_linked_issue() {
+    local pr_number="$1"
+    local pr_body
+    pr_body=$(gh pr view "$pr_number" --json body -q '.body' 2>/dev/null)
+    [ -n "$pr_body" ] && echo "$pr_body" | grep -qiE '(closes|fixes|resolves|part of)\s+#[0-9]+'
+}
+
+# Merge-ready mode: merge PR, clean up branches, create new feature branch
+# Called when branch is fully pushed, has an open PR with linked issue
+# Returns 0 if merge was performed, 1 if user declined
+merge_ready_mode() {
+    local pr_number="$MERGE_READY_PR_NUMBER"
+    local pr_title="$MERGE_READY_PR_TITLE"
+
+    echo ""
+    echo -e "🎯 ${GREEN}Merge-ready detected!${NC}"
+    echo -e "  Branch ${CYAN}${HEAD_BRANCH}${NC} is fully pushed with an open PR and linked issue."
+    echo ""
+    echo -e "📝 ${BLUE}The following actions will be performed:${NC}"
+    echo -e "  1. 🔀 Merge PR #${pr_number}: ${pr_title}"
+    echo -e "  2. 🗑️  Delete remote branch '${HEAD_BRANCH}'"
+    echo -e "  3. 🔄 Switch to ${BASE_BRANCH} and pull latest"
+    echo -e "  4. 🗑️  Delete local branch '${HEAD_BRANCH}'"
+    echo -e "  5. 🌱 Create a new feature branch"
+    echo ""
+
+    read -r -p "⚠️  Merge and start fresh? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "  ℹ️  Skipping merge — continuing with workflow"
+        return 1
+    fi
+
+    echo ""
+
+    # Step 1 & 2: Merge PR on GitHub and delete remote branch
+    echo -e "🔀 ${BLUE}Merging PR #${pr_number} (${HEAD_BRANCH} → ${BASE_BRANCH})...${NC}"
+    local merge_output
+    if ! merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1); then
+        if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+            echo -e "  ❌ Merge conflict detected — resolve manually and retry"
+        else
+            echo -e "  ❌ Merge failed"
+            echo "$merge_output" >&2
+        fi
+        error_exit "Failed to merge PR #${pr_number}."
+    fi
+    echo -e "  ✅ PR #${pr_number} merged and closed"
+    echo -e "  ✅ Remote branch '${HEAD_BRANCH}' deleted"
+
+    # Step 3: Switch to base branch and pull latest
+    echo -e "🔄 ${BLUE}Switching to ${BASE_BRANCH} and pulling latest...${NC}"
+    if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
+        error_exit "Could not switch to ${BASE_BRANCH}."
+    fi
+    if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
+        echo -e "  ⚠️  Could not pull latest ${BASE_BRANCH}"
+    else
+        echo -e "  ✅ Switched to ${BASE_BRANCH} and pulled latest"
+    fi
+
+    # Step 4: Delete local feature branch
+    local local_branch_deleted=false
+    if git show-ref --verify --quiet "refs/heads/$HEAD_BRANCH"; then
+        echo -e "🗑️  ${BLUE}Deleting local branch '${HEAD_BRANCH}'...${NC}"
+        if ! git branch -d "$HEAD_BRANCH" 2>/dev/null; then
+            echo -e "  ⚠️  Could not delete with -d, trying -D..."
+            if ! git branch -D "$HEAD_BRANCH" 2>/dev/null; then
+                echo -e "  ⚠️  Could not delete local branch '${HEAD_BRANCH}'"
+                echo -e "  👉 To force delete: git branch -D ${HEAD_BRANCH}"
+            else
+                echo -e "  ✅ Local branch '${HEAD_BRANCH}' deleted"
+                local_branch_deleted=true
+            fi
+        else
+            echo -e "  ✅ Local branch '${HEAD_BRANCH}' deleted"
+            local_branch_deleted=true
+        fi
+    fi
+
+    # Step 5: Prompt for new feature branch
+    echo ""
+    echo -e "🌱 ${YELLOW}Create a new feature branch?${NC}"
+    local new_branch_name
+    read -r -p "🌱 Enter new branch name (or press Enter to skip): " new_branch_name
+
+    local new_branch_created=false
+    if [ -n "$new_branch_name" ]; then
+        if git show-ref --verify --quiet "refs/heads/$new_branch_name"; then
+            echo -e "  ⚠️  Branch '${new_branch_name}' already exists — switching to it"
+            git checkout "$new_branch_name" 2>/dev/null || echo -e "  ❌ Could not switch to '${new_branch_name}'"
+        else
+            echo -e "🌱 ${BLUE}Creating branch '${new_branch_name}'...${NC}"
+            if ! git checkout -b "$new_branch_name" 2>/dev/null; then
+                echo -e "  ❌ Failed to create branch '${new_branch_name}'"
+            else
+                echo -e "  ✅ Branch '${new_branch_name}' created and checked out"
+                new_branch_created=true
+            fi
+        fi
+    else
+        echo -e "  ℹ️  Staying on ${BASE_BRANCH}"
+    fi
+
+    # Summary
+    echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║     🎉 All actions completed!            ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+    echo -e "📝 ${CYAN}Summary:${NC}"
+    echo -e "  • PR #${pr_number} merged and closed: ${pr_title}"
+    echo -e "  • Remote branch '${HEAD_BRANCH}' deleted"
+    if [ "$local_branch_deleted" = true ]; then
+        echo -e "  • Local branch '${HEAD_BRANCH}' deleted"
+    fi
+    echo -e "  • ${BASE_BRANCH} updated with latest changes"
+    if [ "$new_branch_created" = true ]; then
+        echo -e "  • 🌱 New branch '${new_branch_name}' created"
+    fi
+    echo ""
+
+    return 0
+}
+
 # PR Management Mode: select a PR and choose an action
 pr_management_mode() {
     echo ""
@@ -1923,6 +2074,17 @@ main() {
     if [ "$mode" = "pr_only" ]; then
         if check_prs_with_comments; then
             return
+        fi
+
+        # Check if branch is merge-ready (fully pushed, open PR, linked issue)
+        if is_local_synced_with_remote && has_open_pr_for_branch && pr_has_linked_issue "$MERGE_READY_PR_NUMBER"; then
+            echo -e "  ✅ Merge-ready: PR #${MERGE_READY_PR_NUMBER} with linked issue"
+            if merge_ready_mode; then
+                echo "╔══════════════════════════════════════════╗"
+                echo "║        👋 Goodbye! See you later!        ║"
+                echo "╚══════════════════════════════════════════╝"
+                return
+            fi
         fi
     fi
 
