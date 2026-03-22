@@ -108,6 +108,13 @@ has_commits_ahead() {
     [ "$ahead" -gt 0 ]
 }
 
+# Check if there are open PRs for the current head branch
+has_open_prs() {
+    local count
+    count=$(gh pr list --head "${HEAD_BRANCH}" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+    [ "$count" -gt 0 ]
+}
+
 # Check GitHub authentication
 check_gh_auth() {
     if ! gh auth status &> /dev/null; then
@@ -2057,8 +2064,13 @@ main() {
         mode="full"
         echo -e "  ✅ Uncommitted changes detected"
     elif has_commits_ahead; then
-        mode="pr_only"
-        echo -e "  ✅ Commits ahead of ${BASE_BRANCH} (already committed)"
+        if ! has_open_prs; then
+            mode="squash_eligible"
+            echo -e "  ✅ Commits ahead of ${BASE_BRANCH}, no open PRs (squash-eligible)"
+        else
+            mode="pr_only"
+            echo -e "  ✅ Commits ahead of ${BASE_BRANCH} (already committed)"
+        fi
     else
         mode="pr_management"
         echo -e "  ✅ Clean working tree — entering PR Management Mode"
@@ -2095,6 +2107,35 @@ main() {
         return
     fi
 
+    # Squash-eligible: offer PR creation or direct squash-merge
+    local squash_after_pr=false
+    if [ "$mode" = "squash_eligible" ]; then
+        echo -e "📋 ${YELLOW}Your branch has commits ahead with no open PR.${NC}"
+        echo ""
+        echo -e "  ${CYAN}1)${NC} 📋 Create a pull request"
+        echo -e "  ${CYAN}2)${NC} 🔀 Squash-merge directly into ${BASE_BRANCH}"
+        echo ""
+
+        local squash_choice
+        while true; do
+            read -r -p "🔢 Choose (1/2): " squash_choice
+            case $squash_choice in
+                1)
+                    mode="pr_only"
+                    break
+                    ;;
+                2)
+                    squash_after_pr=true
+                    break
+                    ;;
+                *)
+                    echo -e "❌ ${RED}Invalid choice. Enter 1 or 2.${NC}"
+                    ;;
+            esac
+        done
+        echo ""
+    fi
+
     if [ "$mode" = "full" ]; then
         # Prompt for commit message
         COMMIT_MESSAGE=""
@@ -2124,6 +2165,16 @@ main() {
         echo -e "  3. 🚀 Push to origin/${HEAD_BRANCH}"
         echo -e "  4. 🔄 Sync with ${BASE_BRANCH} (merge any new changes)"
         echo -e "  5. 📋 Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
+    elif [ "$squash_after_pr" = true ]; then
+        # Squash-merge mode
+        echo -e "📝 ${BLUE}The following actions will be performed:${NC}"
+        echo -e "  1. 🚀 Push to origin/${HEAD_BRANCH}"
+        echo -e "  2. 🔄 Sync with ${BASE_BRANCH} (merge any new changes)"
+        echo -e "  3. 📋 Create PR from ${HEAD_BRANCH} → ${BASE_BRANCH}"
+        echo -e "  4. 🔀 Squash-merge PR into ${BASE_BRANCH}"
+        echo -e "  5. 🗑️  Delete remote branch '${HEAD_BRANCH}'"
+        echo -e "  6. 🔄 Switch to ${BASE_BRANCH} and pull latest"
+        echo -e "  7. 🗑️  Delete local branch '${HEAD_BRANCH}'"
     else
         # PR only mode
         echo -e "📝 ${BLUE}The following actions will be performed:${NC}"
@@ -2294,6 +2345,90 @@ Closes #${SELECTED_ISSUE}"
     fi
 
     echo ""
+
+    # If squash_after_pr, immediately squash-merge the newly created PR
+    if [ "$squash_after_pr" = true ]; then
+        # Find the PR we just created (or that already existed)
+        local squash_pr_number=""
+        if [ -n "$existing_pr_number" ]; then
+            squash_pr_number="$existing_pr_number"
+        else
+            local squash_pr_json
+            squash_pr_json=$(gh pr list --head "${HEAD_BRANCH}" --base "${BASE_BRANCH}" --state open --json number --limit 1 2>/dev/null)
+            squash_pr_number=$(echo "$squash_pr_json" | jq -r '.[0].number' 2>/dev/null)
+        fi
+
+        if [ -z "$squash_pr_number" ] || [ "$squash_pr_number" = "null" ]; then
+            echo -e "  ⚠️  Could not find PR to squash-merge — skipping"
+        else
+            echo -e "🔀 ${BLUE}Squash-merging PR #${squash_pr_number}...${NC}"
+            local merge_output
+            if ! merge_output=$(gh pr merge "$squash_pr_number" --squash --delete-branch 2>&1); then
+                if echo "$merge_output" | grep -qi "conflict\|merge conflict"; then
+                    echo -e "  ❌ Merge conflict detected — resolve manually and retry"
+                else
+                    echo -e "  ❌ Merge failed"
+                    echo "$merge_output" >&2
+                fi
+                error_exit "Failed to squash-merge PR #${squash_pr_number}."
+            fi
+            echo -e "  ✅ PR #${squash_pr_number} squash-merged and remote branch deleted"
+
+            # Switch to base branch and pull latest
+            echo -e "🔄 ${BLUE}Switching to ${BASE_BRANCH} and pulling...${NC}"
+            if ! git checkout "$BASE_BRANCH" 2>/dev/null; then
+                echo -e "  ⚠️  Could not switch to ${BASE_BRANCH} automatically"
+            else
+                if ! git pull origin "$BASE_BRANCH" 2>/dev/null; then
+                    echo -e "  ⚠️  Could not pull latest ${BASE_BRANCH}"
+                else
+                    echo -e "  ✅ Switched to ${BASE_BRANCH} and pulled latest"
+                fi
+            fi
+
+            # Delete local head branch if it still exists
+            local branch_deleted=false
+            if git show-ref --verify --quiet "refs/heads/$HEAD_BRANCH"; then
+                echo -e "🗑️  ${BLUE}Deleting local branch '${HEAD_BRANCH}'...${NC}"
+                if ! git branch -d "$HEAD_BRANCH" 2>/dev/null; then
+                    echo -e "  ⚠️  Could not delete local branch '${HEAD_BRANCH}'"
+                    echo -e "  👉 To force delete: git branch -D ${HEAD_BRANCH}"
+                else
+                    echo -e "  ✅ Local branch '${HEAD_BRANCH}' deleted"
+                    branch_deleted=true
+                fi
+            fi
+
+            # Reset head environment
+            reset_head_environment
+
+            # Squash-merge summary
+            echo ""
+            echo "╔══════════════════════════════════════════╗"
+            echo "║     🎉 All actions completed!            ║"
+            echo "╚══════════════════════════════════════════╝"
+            echo ""
+            echo -e "📝 ${CYAN}Summary:${NC}"
+            echo -e "  • 🔀 PR #${squash_pr_number} squash-merged into ${BASE_BRANCH}"
+            echo -e "  • 🗑️  Remote branch '${HEAD_BRANCH}' deleted"
+            if [ "$branch_deleted" = true ]; then
+                echo -e "  • 🗑️  Local branch '${HEAD_BRANCH}' deleted"
+            fi
+            echo -e "  • 🔄 ${BASE_BRANCH} updated with latest changes"
+            if [ -n "$SELECTED_ISSUE" ]; then
+                if [ -n "$CREATED_ISSUE_FOR_PR" ]; then
+                    echo -e "  • 🔗 Created and linked issue #${SELECTED_ISSUE}: ${CREATED_ISSUE_FOR_PR}"
+                else
+                    echo -e "  • 🔗 Linked to issue #${SELECTED_ISSUE} (closes on merge)"
+                fi
+            fi
+            echo ""
+            echo "╔══════════════════════════════════════════╗"
+            echo "║     👋 Goodbye! Happy coding! 🚀        ║"
+            echo "╚══════════════════════════════════════════╝"
+            return
+        fi
+    fi
 
     # Success message
     echo ""

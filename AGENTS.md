@@ -12,13 +12,14 @@ Git Shipyard is a single-file Bash utility (`git-shipyard.sh`) that automates th
 The entire application is contained in `git-shipyard.sh` with no external dependencies beyond standard Unix tools, git, GitHub CLI (gh), and jq (for JSON parsing).
 
 ### Execution Modes
-The script automatically detects and switches between four operational modes:
+The script automatically detects and switches between five operational modes:
 - **Full mode**: Triggered when uncommitted changes exist (staged, unstaged, or untracked files). Executes: stage → commit → push → create PR
-- **PR-only mode**: Triggered when branch has commits ahead of base. Executes: push (if needed) → create PR. Includes a merge-ready sub-check (see below).
+- **Squash-eligible mode**: Triggered when branch has commits ahead of base AND no open PRs exist for the branch. Prompts user to choose: (1) create a PR (continues as PR-only) or (2) squash-merge directly (push → sync → create PR → squash-merge → clean up branches → reset environment).
+- **PR-only mode**: Triggered when branch has commits ahead of base AND open PRs exist. Executes: push (if needed) → create PR. Includes a merge-ready sub-check (see below).
 - **Merge-ready mode** (sub-mode of PR-only): Triggered when all PR-only conditions are met AND the branch is fully pushed (local HEAD == remote HEAD), an open PR exists for the branch, and the PR has a linked issue. Offers to merge the PR, clean up branches, and create a new feature branch.
 - **PR Management mode**: Triggered when clean working tree and no commits ahead of base. Interactive menu to view, close, squash-merge PRs, or manage linked issues.
 
-Mode detection logic relies on `has_uncommitted_changes()`, `has_commits_ahead()`, `is_local_synced_with_remote()`, `has_open_pr_for_branch()`, and `pr_has_linked_issue()` functions which query git and GitHub state.
+Mode detection logic relies on `has_uncommitted_changes()`, `has_commits_ahead()`, `has_open_prs()`, `is_local_synced_with_remote()`, `has_open_pr_for_branch()`, and `pr_has_linked_issue()` functions which query git and GitHub state.
 
 ### Error Handling Strategy
 - All Git/GitHub operations use conditional checks with `error_exit()` on failure
@@ -83,6 +84,7 @@ git shipyard --help
 ### State Detection Functions
 - `has_uncommitted_changes()`: Checks git diff (staged/unstaged) and untracked files
 - `has_commits_ahead()`: Uses `git rev-list --count BASE..HEAD` to detect unpushed commits
+- `has_open_prs()`: Queries `gh pr list --head HEAD_BRANCH --state open` to check if open PRs exist for the current branch
 - `is_local_synced_with_remote()`: Fetches remote HEAD_BRANCH and compares commit hashes to verify all commits are pushed
 - `has_open_pr_for_branch()`: Queries `gh pr list` for an open PR matching HEAD_BRANCH → BASE_BRANCH; sets `MERGE_READY_PR_NUMBER` and `MERGE_READY_PR_TITLE` globals
 - `pr_has_linked_issue()`: Scans PR body for closing keywords (`Closes/Fixes/Resolves/Part of #N`)
